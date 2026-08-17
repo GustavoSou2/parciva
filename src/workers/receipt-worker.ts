@@ -3,15 +3,24 @@
  * Concorrência 1: OCR local disputa CPU com Postgres/Redis na mesma VPS
  * (risco C-30) — um job por vez evita saturar o recurso compartilhado.
  *
- * Nunca importa `db` diretamente — as dependências de `ingestReceipt`
- * (checkDuplicate, extração) entram via stub até o banco e o VLM
- * estarem conectados (tarefas futuras).
+ * Nunca importa `db` diretamente — `checkDuplicate` e
+ * `runDeterministicExtraction` de `ingestReceipt` entram via stub até o
+ * banco estar conectado (tarefa futura). `runOcrExtraction` (Tier 2,
+ * spec §7.1) já é real. VLM (Tier 3, `anthropic-vlm.ts`) segue existindo
+ * no módulo `ingestion`, mas não é usado aqui por ora — sem VLM na
+ * cascata, imagem com confiança baixa após OCR vai para revisão humana,
+ * não para o modelo pago (ver `application/ingest-receipt.ts`).
  */
 
 import { Worker, type Job } from "bullmq";
 import type { TenantContext } from "@/db/client";
-import { ingestReceipt, type IngestDeps, type RawReceipt } from "@/modules/ingestion";
-import { isErr } from "@/shared/result";
+import {
+  extractTextFromImage,
+  ingestReceipt,
+  type IngestDeps,
+  type RawReceipt,
+} from "@/modules/ingestion";
+import { isErr, isOk } from "@/shared/result";
 import { RECEIPT_QUEUE, type ReceiptJobData } from "./queues";
 
 function redisUrl(): string {
@@ -22,11 +31,12 @@ function redisUrl(): string {
   return url;
 }
 
-// TODO: substituir pelos deps reais quando banco e VLM estiverem
-// conectados — por enquanto nunca deduplica e nunca extrai de fato.
+// TODO: substituir pelos deps reais quando o banco estiver conectado —
+// checkDuplicate/runDeterministicExtraction ainda são stub.
 const deps: IngestDeps = {
   checkDuplicate: () => Promise.resolve(false),
   runDeterministicExtraction: () => ({}),
+  runOcrExtraction: extractTextFromImage,
 };
 
 /**
@@ -62,11 +72,32 @@ async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
       confidence: result.value.confidence,
     });
   }
+
+  if (isOk(result)) {
+    console.log("[receipt-worker] campos extraídos:", JSON.stringify({
+      method: result.value.method,
+      amount_cents: result.value.amount_cents,
+      paid_at: result.value.paid_at,
+      transaction_ref: result.value.transaction_ref,
+      payer_name: result.value.payer_name,
+      institution: result.value.institution,
+    }, null, 2))
+  }
 }
 
 export const receiptWorker = new Worker<ReceiptJobData>(RECEIPT_QUEUE, processReceiptJob, {
   connection: { url: redisUrl(), maxRetriesPerRequest: null },
   concurrency: 1,
+});
+
+receiptWorker.on("error", (err) => {
+  console.error("Worker erro:", err);
+});
+receiptWorker.on("ready", () => {
+  console.log("Worker conectado ao Redis e pronto");
+});
+receiptWorker.on("active", (job) => {
+  console.log("Worker processando job:", job.id);
 });
 
 /** Desligamento gracioso — C-31: reinício de servidor não pode deixar job preso em `processing`. */

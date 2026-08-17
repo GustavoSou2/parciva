@@ -60,6 +60,14 @@ async function downloadMedia(url: string, authToken: string): Promise<Buffer> {
 
 async function enqueueReceipt(tenantId: string, raw: RawReceipt): Promise<void> {
   const receiptId = randomUUID();
+  console.log(
+    "enqueueReceipt: chamado, tenantId:",
+    tenantId,
+    "receiptId:",
+    receiptId,
+    "mimeType:",
+    raw.mimeType,
+  );
   await getReceiptQueue().add("process-receipt", {
     tenantId,
     receiptId,
@@ -68,6 +76,7 @@ async function enqueueReceipt(tenantId: string, raw: RawReceipt): Promise<void> 
     source: raw.source,
     receivedAt: raw.receivedAt.toISOString(),
   });
+  console.log("enqueueReceipt: job adicionado com sucesso");
 }
 
 async function sendReply(to: string, body: string): Promise<void> {
@@ -161,13 +170,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       sendReply,
     };
 
+    console.log("handleInbound: chamando");
     const result = await handleInbound(ctx, payload, rawParams, signature, url, deps);
+    console.log("handleInbound resultado:", JSON.stringify(result));
 
     if (isErr(result) && result.error === "duplicate" && payload.From) {
       try {
         await sendReply(payload.From, REPLY_DUPLICATE);
       } catch (error) {
         console.error("[whatsapp webhook] falha ao enviar aviso de duplicidade", error);
+        console.error(
+          "[whatsapp webhook] stack:",
+          error instanceof Error ? error.stack : error,
+        );
       }
     }
 
@@ -178,6 +193,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ received: true }, { status: 200 });
   } catch (error) {
     console.error("[whatsapp webhook] erro inesperado", error);
+    console.error("[whatsapp webhook] stack:", error instanceof Error ? error.stack : error);
     return NextResponse.json({ received: true }, { status: 200 });
   }
 }

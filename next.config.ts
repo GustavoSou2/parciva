@@ -6,6 +6,10 @@ const nextConfig: NextConfig = {
   experimental: {
     authInterrupts: true,
   },
+  // bullmq/ioredis ficam fora do bundle do webpack — evita o warning
+  // "Module not found: @valkey/valkey-glide" (dependência opcional do
+  // bullmq que o webpack tenta resolver mesmo sem estar instalada).
+  serverExternalPackages: ["bullmq", "ioredis"],
 };
 
 export default nextConfig;

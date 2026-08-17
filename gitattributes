@@ -1,0 +1,11 @@
+# Força LF em todos os arquivos de texto — evita diff espúrio e problema
+# de linha no WSL/Linux quando o projeto sair do Windows.
+* text=auto eol=lf
+
+# Binários — sem conversão
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.tar.gz binary
+*.zip binary

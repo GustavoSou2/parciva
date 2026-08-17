@@ -1,0 +1,40 @@
+# Node
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Build
+dist/
+build/
+
+# Env — segredo nunca versionado (CLAUDE.md, invariante 7)
+.env
+.env.local
+.env.*.local
+
+# Storage local de comprovantes (docs/quitou-setup.md §1.4.1)
+storage/
+
+# Testes / coverage
+coverage/
+.vitest-cache/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+*.log

@@ -1,0 +1,121 @@
+{
+  "name": "Quitou",
+  "description": "Design tokens extraidos do dashboard financeiro Quitou. Monocromatico com um unico acento menta. Compativel com tailwind.config.js (v3) via theme.extend.",
+  "version": "1.0.0",
+  "theme": {
+    "extend": {
+      "colors": {
+        "ink": {
+          "DEFAULT": "#0A0A0A",
+          "50": "#F5F5F5",
+          "100": "#E6E6E6",
+          "200": "#D5D5D5",
+          "300": "#BDBDBD",
+          "400": "#9A9A9A",
+          "500": "#8A8A8A",
+          "600": "#6B6B6B",
+          "700": "#4A4A4A",
+          "800": "#2E2E2E",
+          "900": "#0A0A0A"
+        },
+        "mint": {
+          "DEFAULT": "#7CF5A5",
+          "50": "#EDFEF3",
+          "100": "#D3FBE1",
+          "200": "#A6F8C4",
+          "300": "#7CF5A5",
+          "400": "#4EE383",
+          "500": "#2FC566",
+          "600": "#1F9C4F",
+          "700": "#17753B",
+          "800": "#0F4D27",
+          "900": "#082915"
+        },
+        "surface": {
+          "canvas": "#F1F1F1",
+          "panel": "#E6E6E6",
+          "card": "#FBFBFB",
+          "raised": "#FFFFFF",
+          "inverse": "#0A0A0A",
+          "assistant": "#2E2E2E",
+          "assistant-chip": "#4A4A4A"
+        },
+        "content": {
+          "primary": "#0A0A0A",
+          "secondary": "#6B6B6B",
+          "muted": "#8A8A8A",
+          "disabled": "#BDBDBD",
+          "on-inverse": "#FFFFFF",
+          "on-assistant": "#B8B8B8"
+        },
+        "line": {
+          "hairline": "#DCDCDC",
+          "axis": "#D5D5D5",
+          "strong": "#0A0A0A",
+          "assistant": "#555555"
+        },
+        "data": {
+          "actual": "#0A0A0A",
+          "forecast": "#BDBDBD",
+          "highlight": "#7CF5A5",
+          "grid": "#E6E6E6"
+        }
+      },
+      "fontFamily": {
+        "display": ["Sofia Pro", "Poppins", "Questrial", "ui-sans-serif", "system-ui", "sans-serif"],
+        "sans": ["Sofia Pro", "Poppins", "ui-sans-serif", "system-ui", "sans-serif"],
+        "num": ["Sofia Pro", "ui-sans-serif", "system-ui", "sans-serif"]
+      },
+      "fontSize": {
+        "display-xl": ["4rem", { "lineHeight": "1.02", "letterSpacing": "-0.03em", "fontWeight": "400" }],
+        "display": ["2.5rem", { "lineHeight": "1.05", "letterSpacing": "-0.02em", "fontWeight": "400" }],
+        "title": ["1.75rem", { "lineHeight": "1.15", "letterSpacing": "-0.015em", "fontWeight": "400" }],
+        "metric": ["1.375rem", { "lineHeight": "1.2", "letterSpacing": "-0.01em", "fontWeight": "400" }],
+        "metric-sm": ["1.25rem", { "lineHeight": "1.2", "letterSpacing": "-0.01em", "fontWeight": "400" }],
+        "body": ["0.875rem", { "lineHeight": "1.5", "letterSpacing": "0" }],
+        "aux": ["0.75rem", { "lineHeight": "1.5", "letterSpacing": "0" }],
+        "micro": ["0.6875rem", { "lineHeight": "1.3", "letterSpacing": "0.09em" }]
+      },
+      "fontWeight": {
+        "normal": "400",
+        "medium": "500"
+      },
+      "letterSpacing": {
+        "micro": "0.09em",
+        "display": "-0.02em",
+        "display-xl": "-0.03em"
+      },
+      "borderRadius": {
+        "card": "12px",
+        "control": "12px",
+        "field": "10px",
+        "chip": "6px",
+        "pill": "9999px"
+      },
+      "borderWidth": {
+        "hairline": "0.5px"
+      },
+      "spacing": {
+        "nav": "52px",
+        "nav-gap": "6px",
+        "icon": "18px",
+        "icon-sm": "14px",
+        "card-pad": "20px",
+        "card-gap": "12px"
+      },
+      "boxShadow": {
+        "none": "none"
+      },
+      "opacity": {
+        "hatch": "0.35"
+      }
+    }
+  },
+  "usage": {
+    "accent": "mint.DEFAULT so em tres papeis: dot de secao, badge de variacao e botao da IA. Nunca como fundo de area grande nem como cor de botao primario.",
+    "semantic": "Nao existe verde-positivo / vermelho-negativo. Variacao e comunicada pelo sinal (+/-) e pela posicao, nao pela cor.",
+    "elevation": "Sem sombra. Hierarquia vem da escada canvas -> panel -> card.",
+    "charts": "data.actual em preto solido, data.forecast em cinza ou hachura diagonal. Sem grid, sem area preenchida.",
+    "typeScale": "Salto binario: micro (11px caps, tracking 0.09em) ou display (40px+). Evitar tamanhos intermediarios em titulos."
+  }
+}
