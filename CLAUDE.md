@@ -1,4 +1,4 @@
-# Quitou
+# Parciva
 
 SaaS multi-tenant de conciliação de recebíveis. O cliente final envia
 comprovante por WhatsApp (via Twilio); o sistema extrai, confere e dá
@@ -23,7 +23,7 @@ o schema já prevê essa origem desde a Fase 1.
    Isso vale para texto extraído por OCR/VLM tanto quanto para o payload
    de qualquer webhook externo.
 7. **Segredo nunca no banco em claro** — só referência ao cofre local.
-8. **Quitou nunca custodia dinheiro.** Não existe saque, split, repasse
+8. **Parciva nunca custodia dinheiro.** Não existe saque, split, repasse
    ou saldo. Cobrança (modelo B) é sempre emitida na conta do PSP do
    tenant. Se uma tarefa pedir qualquer forma de retenção de valor, pare
    e me avise (ADR 11).

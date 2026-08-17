@@ -1,7 +1,7 @@
 export default function HomePage() {
   return (
     <main>
-      <p>Quitou — Fase 0</p>
+      <p>Parciva — Fase 0</p>
     </main>
   );
 }

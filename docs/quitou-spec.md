@@ -1,4 +1,4 @@
-# Quitou — Especificação Técnica de Desenvolvimento
+# Parciva — Especificação Técnica de Desenvolvimento
 
 **Versão:** 1.0
 **Data:** 11 de agosto de 2026
@@ -8,7 +8,7 @@
 
 ## 1. Sumário executivo
 
-Quitou é um SaaS multi-tenant de **conciliação automática de recebíveis**. O cliente final de uma empresa envia um comprovante de pagamento pelo WhatsApp; o sistema extrai os dados do documento, valida sua consistência e autenticidade aparente, e aplica a baixa na parcela correspondente — ou registra adiantamento/abatimento — mantendo um ledger auditável.
+Parciva é um SaaS multi-tenant de **conciliação automática de recebíveis**. O cliente final de uma empresa envia um comprovante de pagamento pelo WhatsApp; o sistema extrai os dados do documento, valida sua consistência e autenticidade aparente, e aplica a baixa na parcela correspondente — ou registra adiantamento/abatimento — mantendo um ledger auditável.
 
 **Categoria de mercado:** Accounts Receivable Automation + Intelligent Document Processing.
 
@@ -16,10 +16,10 @@ Quitou é um SaaS multi-tenant de **conciliação automática de recebíveis**. 
 
 **Não-objetivos do MVP (explícitos):**
 
-- **Quitou nunca custodia dinheiro.** Nem no MVP, nem depois. Quando a Fase 6 introduzir geração de cobrança PIX (§2.5, modelo B), o recurso vai direto do pagador para a conta do próprio tenant no PSP dele. Quitou não é titular, intermediário nem custodiante em nenhuma hipótese. Essa fronteira é permanente — ADR 11.
+- **Parciva nunca custodia dinheiro.** Nem no MVP, nem depois. Quando a Fase 6 introduzir geração de cobrança PIX (§2.5, modelo B), o recurso vai direto do pagador para a conta do próprio tenant no PSP dele. Parciva não é titular, intermediário nem custodiante em nenhuma hipótese. Essa fronteira é permanente — ADR 11.
 - Não emite boleto nem nota fiscal no MVP.
 - Não é ERP contábil. Sem plano de contas, sem SPED, sem NF-e.
-- Não faz confirmação bancária real da transação nas Fases 1–5 (ver §8 e §16, risco R-01). A Fase 6 resolve isso para os pagamentos originados no próprio Quitou.
+- Não faz confirmação bancária real da transação nas Fases 1–5 (ver §8 e §16, risco R-01). A Fase 6 resolve isso para os pagamentos originados no próprio Parciva.
 - Não é ferramenta de cobrança ativa no MVP — vira feature natural na Fase 6, quando a cobrança passa a ser gerada pelo sistema.
 
 ---
@@ -50,7 +50,7 @@ Segmentos-alvo: imobiliárias e administradoras de aluguel, financeiras/factorin
 ### 2.3 Jornada principal (happy path)
 
 ```
-Pagador                Quitou                        Empresa
+Pagador                Parciva                        Empresa
    |                       |                               |
    |-- foto do comprovante->|                              |
    |                       |-- dedupe (hash) --------------|
@@ -80,19 +80,19 @@ O produto tem duas origens possíveis de pagamento. O MVP implementa apenas a pr
 
 **Modelo A — conciliação passiva (Fases 1–5)**
 
-O pagador paga como quiser, por fora do sistema, e envia o comprovante. Quitou extrai, confere e propõe a baixa. A confirmação é **inferida de um documento**: nunca há certeza, só grau de confiança. É todo o motivo de existir das §7 e §8.
+O pagador paga como quiser, por fora do sistema, e envia o comprovante. Parciva extrai, confere e propõe a baixa. A confirmação é **inferida de um documento**: nunca há certeza, só grau de confiança. É todo o motivo de existir das §7 e §8.
 
-**Modelo B — cobrança originada no Quitou (Fase 6)**
+**Modelo B — cobrança originada no Parciva (Fase 6)**
 
-Quitou gera um PIX cobrança (QR/copia-e-cola) com identificador próprio (`txid`), emitido **na conta do PSP do próprio tenant**. O pagador paga aquele QR; o PSP notifica o Quitou por webhook; a baixa é aplicada com confirmação bancária real.
+Parciva gera um PIX cobrança (QR/copia-e-cola) com identificador próprio (`txid`), emitido **na conta do PSP do próprio tenant**. O pagador paga aquele QR; o PSP notifica o Parciva por webhook; a baixa é aplicada com confirmação bancária real.
 
-O dinheiro nunca passa pelo Quitou. Isso mantém o projeto fora do regime de instituição de pagamento — decisão registrada em ADR 11 e que **não deve ser revisitada sem assessoria regulatória**. Não sou advogado e esta spec não substitui essa consulta; o desenho aqui parte do princípio de que o Quitou é software de gestão, não participante do arranjo de pagamento.
+O dinheiro nunca passa pelo Parciva. Isso mantém o projeto fora do regime de instituição de pagamento — decisão registrada em ADR 11 e que **não deve ser revisitada sem assessoria regulatória**. Não sou advogado e esta spec não substitui essa consulta; o desenho aqui parte do princípio de que o Parciva é software de gestão, não participante do arranjo de pagamento.
 
 **Por que B não substitui A**
 
 Sempre haverá quem pague por fora: transferência antiga, dinheiro em espécie, PIX direto na chave da empresa, pagamento feito antes de o QR ser gerado. O modelo A não desaparece — ele deixa de ser o caminho principal e vira **o caminho de exceção**.
 
-| | Modelo A (comprovante) | Modelo B (cobrança Quitou) |
+| | Modelo A (comprovante) | Modelo B (cobrança Parciva) |
 |---|---|---|
 | Gatilho | Pagador envia documento | PSP notifica por webhook |
 | Confirmação | Inferida do documento | Real, confirmada pelo banco |
@@ -103,7 +103,7 @@ Sempre haverá quem pague por fora: transferência antiga, dinheiro em espécie,
 | Custo por pagamento | Extração + revisão | Tarifa do PSP do tenant |
 | Baixa automática | Condicional (§6.5) | Sempre |
 
-**Consequência de produto:** conforme os tenants migram cobranças para o modelo B, o custo de IA por pagamento cai e a taxa de automação sobe. A métrica de saúde do negócio deixa de ser "% de comprovantes automatizados" e passa a ser **"% de pagamentos que nasceram no Quitou"**.
+**Consequência de produto:** conforme os tenants migram cobranças para o modelo B, o custo de IA por pagamento cai e a taxa de automação sobe. A métrica de saúde do negócio deixa de ser "% de comprovantes automatizados" e passa a ser **"% de pagamentos que nasceram no Parciva"**.
 
 ---
 
@@ -115,7 +115,7 @@ Escolhida por: custo baixo em escala pequena, isolamento de tenant nativo, e tim
 
 | Camada | Escolha | Justificativa |
 |---|---|---|
-| Frontend | Next.js (App Router) + TypeScript + Tailwind v3 | Tokens do Quitou já vêm em formato `theme.extend` |
+| Frontend | Next.js (App Router) + TypeScript + Tailwind v3 | Tokens do Parciva já vêm em formato `theme.extend` |
 | Backend | Next.js Route Handlers + serviços em TS, ou API separada (Fastify/NestJS) | Monólito modular no MVP; extrair serviços só quando houver motivo |
 | Banco | PostgreSQL auto-hospedado na VPS (container ou pacote do sistema) | RLS nativo, JSONB, transações fortes — obrigatório para ledger |
 | Fila | BullMQ + Redis na própria VPS | Processamento assíncrono de comprovantes, retry, DLQ |
@@ -179,7 +179,7 @@ Toda persistência de arquivo acontece no disco da própria VPS. Isso elimina eg
 **Layout endereçado por conteúdo**
 
 ```
-/var/lib/quitou/receipts/
+/var/lib/parciva/receipts/
   <tenant_id>/
     <aa>/<bb>/<content_hash>.<ext>      ← aa/bb: dois primeiros pares do hash
 ```
@@ -205,7 +205,7 @@ Não há serviço externo para assinar URL. O padrão equivalente: a aplicação
 ```nginx
 location /protected/ {
     internal;                                  # inacessível diretamente
-    alias /var/lib/quitou/receipts/;
+    alias /var/lib/parciva/receipts/;
 }
 ```
 
@@ -226,7 +226,7 @@ A chave mestra fica fora do repositório e fora do banco: arquivo `0400` carrega
 
 Disco é finito, e é a primeira coisa que quebra num SaaS de documentos:
 
-- Volume dedicado para `/var/lib/quitou` — comprovante enchendo o disco **não** pode derrubar o Postgres nem o journal do sistema.
+- Volume dedicado para `/var/lib/parciva` — comprovante enchendo o disco **não** pode derrubar o Postgres nem o journal do sistema.
 - Cota por tenant derivada do plano, verificada antes de aceitar o upload.
 - Retenção do plano aplicada por job diário real, não apenas documentada — é o que mantém o crescimento sob controle.
 - Alerta em 70% e corte de ingestão em 90% de ocupação. Recusar upload é ruim; corromper o banco por disco cheio é irreversível.
@@ -374,13 +374,13 @@ credit_balances                 -- sobra que não coube em parcela
 
 -- ── Modelo B: criadas vazias na Fase 1, usadas a partir da Fase 6 ──
 
-psp_connections                 -- conta do PSP DO TENANT, nunca do Quitou
+psp_connections                 -- conta do PSP DO TENANT, nunca do Parciva
   id PK, tenant_id FK, provider, account_ref,
   credentials_ref,              -- ponteiro para o cofre, NUNCA o segredo
   capabilities JSONB,           -- {"pix_charge": true, "statement": true}
   status ENUM(pending, active, expired, revoked), last_verified_at
 
-charges                         -- cobrança gerada pelo Quitou
+charges                         -- cobrança gerada pelo Parciva
   id PK, tenant_id FK, psp_connection_id FK, payer_id FK, contract_id FK,
   txid U,                       -- identificador do PIX cobrança, gerado por nós
   psp_charge_id,                -- id no lado do PSP
@@ -845,7 +845,7 @@ Respostas curtas, sem emoji excessivo, sempre com o valor e a parcela explícito
 
 Não sou advogado e isto não é orientação jurídica — vale revisão com um profissional antes do lançamento comercial. Pontos que a arquitetura precisa suportar:
 
-- **Papéis**: o tenant é controlador dos dados dos pagadores dele; Quitou é operador. Isso precisa estar escrito no contrato (DPA) e refletido no produto.
+- **Papéis**: o tenant é controlador dos dados dos pagadores dele; Parciva é operador. Isso precisa estar escrito no contrato (DPA) e refletido no produto.
 - **Base legal**: execução de contrato / legítimo interesse — mas o pagador precisa saber que está falando com um sistema automatizado e o que acontece com o comprovante dele. Mensagem inicial do bot deve informar isso e apontar a política de privacidade.
 - **Minimização**: não guardar mais do que o necessário; comprovante tem prazo de retenção configurável por plano.
 - **Direitos do titular**: exportação e exclusão precisam existir como função de produto (não como script manual), respeitando a retenção legal de registros financeiros.
@@ -868,7 +868,7 @@ Não sou advogado e isto não é orientação jurídica — vale revisão com um
 | Retenção de comprovante | 90 dias | 1 ano | 5 anos | sob medida |
 | Extração premium (Tier 4) | — | ✓ | ✓ | ✓ |
 | Conciliação por extrato | — | — | ✓ | ✓ |
-| Cobrança PIX pelo Quitou (modelo B) | — | ✓ | ✓ | ✓ |
+| Cobrança PIX pelo Parciva (modelo B) | — | ✓ | ✓ | ✓ |
 | API + webhooks | — | — | ✓ | ✓ |
 | Regras de risco customizadas | — | — | ✓ | ✓ |
 | SSO/SAML | — | — | — | ✓ |
@@ -914,7 +914,7 @@ O superadmin **não** tem acesso irrestrito por padrão. Para abrir dados de um 
 
 ## 13. Interface e design system
 
-### 13.1 Aplicação dos tokens Quitou
+### 13.1 Aplicação dos tokens Parciva
 
 Os tokens anexados definem uma estética monocromática rigorosa com um único acento menta. Consequências de produto que precisam ser respeitadas:
 
@@ -985,7 +985,7 @@ Estimativas assumem **1 desenvolvedor full-stack experiente em tempo parcial-alt
 - Ledger append-only com triggers de proteção
 - Motor de alocação completo (§6), versionado
 - Registro **manual** de pagamento (sem IA, sem WhatsApp)
-- Telas de contratos e pagadores com os tokens Quitou
+- Telas de contratos e pagadores com os tokens Parciva
 
 **DoD**
 - Todos os casos de borda de §6.6 cobertos por teste
@@ -1081,7 +1081,7 @@ Esta é a fase que muda a natureza do produto: de "conferimos seu comprovante" p
 
 **Escopo regulatório — fronteira que não se cruza**
 - A cobrança é emitida **na conta do PSP do tenant**. O recurso vai do pagador direto para a empresa.
-- Quitou não é titular, não faz split, não retém, não repassa. Sem custódia, sem saldo, sem carteira.
+- Parciva não é titular, não faz split, não retém, não repassa. Sem custódia, sem saldo, sem carteira.
 - Nenhuma credencial de PSP fica em claro no banco; nenhuma operação de saque ou transferência é implementada, mesmo que a API do PSP ofereça.
 - Antes do lançamento comercial desta fase, revisão com assessoria regulatória e jurídica. Não sou advogado e esta spec não substitui isso.
 
@@ -1092,7 +1092,7 @@ Esta é a fase que muda a natureza do produto: de "conferimos seu comprovante" p
 - Credencial de PSP expirada gera alerta ao tenant, não falha silenciosa (C-35)
 - Divergência entre PSP e ledger detectada pelo job de conciliação em até 24 h
 
-**Marco de negócio:** a partir daqui, a métrica principal passa a ser "% de pagamentos originados no Quitou". É ela que derruba o custo de IA por pagamento e a fila de revisão.
+**Marco de negócio:** a partir daqui, a métrica principal passa a ser "% de pagamentos originados no Parciva". É ela que derruba o custo de IA por pagamento e a fila de revisão.
 
 ---
 
@@ -1112,7 +1112,7 @@ receipt.needs_review    installment.paid
                         contract.settled
 ```
 
-**Modo espelho (para quem já tem ERP):** o tenant importa parcelas via API, Quitou concilia, e devolve a baixa via webhook. O ERP dele continua sendo a fonte da verdade; Quitou é a camada de conciliação. Este é o formato que abre o mercado de empresas maiores sem exigir que elas troquem de sistema.
+**Modo espelho (para quem já tem ERP):** o tenant importa parcelas via API, Parciva concilia, e devolve a baixa via webhook. O ERP dele continua sendo a fonte da verdade; Parciva é a camada de conciliação. Este é o formato que abre o mercado de empresas maiores sem exigir que elas troquem de sistema.
 
 **DoD**
 - Idempotência garantida em toda escrita da API
@@ -1126,7 +1126,7 @@ receipt.needs_review    installment.paid
 - Conectores nativos de ERP — **só construir com demanda comprovada**, um por vez, idealmente com cliente pagando
 - Novos PSPs além do primeiro suportado na Fase 6 — mesma regra: um por vez, puxado por demanda
 - SSO/SAML, logs de auditoria exportáveis, retenção customizada
-- Avaliação de Open Finance para os pagamentos que continuam nascendo fora do Quitou (modelo A residual). Com a Fase 6 entregue, a urgência disso cai bastante — o Open Finance passa a cobrir só a exceção, não o fluxo principal
+- Avaliação de Open Finance para os pagamentos que continuam nascendo fora do Parciva (modelo A residual). Com a Fase 6 entregue, a urgência disso cai bastante — o Open Finance passa a cobrir só a exceção, não o fluxo principal
 - Certificações que o mercado enterprise cobrar
 
 **Regra:** cada conector é um compromisso de manutenção permanente. Um conector com dois clientes custa mais do que rende.
@@ -1222,7 +1222,7 @@ Rodar em staging com dados sintéticos, trimestralmente, e sempre antes de um la
 
 | ID | Risco | Severidade | Estratégia |
 |---|---|---|---|
-| **R-01** | Sem confirmação bancária real, o produto valida aparência, não transação | Alta nas Fases 1–5, decrescente depois | Comunicação honesta por nível de verificação (§8.3); conciliação por extrato na Fase 5; **modelo B na Fase 6 elimina o risco para todo pagamento originado no Quitou** |
+| **R-01** | Sem confirmação bancária real, o produto valida aparência, não transação | Alta nas Fases 1–5, decrescente depois | Comunicação honesta por nível de verificação (§8.3); conciliação por extrato na Fase 5; **modelo B na Fase 6 elimina o risco para todo pagamento originado no Parciva** |
 | **R-02** | Custo de IA por comprovante corrói a margem do plano barato | Alta | Cascata determinística-primeiro; medição por tenant desde a Fase 2; cota rígida no grátis |
 | **R-03** | Dependência da Meta para o canal principal | Média | API oficial; canais alternativos sempre disponíveis; nunca ser o remetente único |
 | **R-04** | Escopo do ledger cresce para mini-ERP | Média | Não-objetivos explícitos (§1); modo espelho (Fase 6) para quem já tem ERP |
@@ -1250,7 +1250,7 @@ Criar um ADR curto para cada uma antes de codar:
 8. Auto-aprovação com teto de valor configurável, padrão conservador
 9. Infraestrutura auto-hospedada em VPS própria, sem nuvem gerenciada
 10. Storage em filesystem endereçado por conteúdo, entregue via `X-Accel-Redirect`
-11. **Quitou nunca custodia dinheiro.** Cobrança emitida sempre na conta do PSP do tenant; sem custódia, split ou repasse. Decisão permanente — reavaliar exige assessoria regulatória prévia
+11. **Parciva nunca custodia dinheiro.** Cobrança emitida sempre na conta do PSP do tenant; sem custódia, split ou repasse. Decisão permanente — reavaliar exige assessoria regulatória prévia
 12. Origem do pagamento (`payments.origin`) é cidadã de primeira classe do modelo de dados desde a Fase 1, ainda que o modelo B só entre na Fase 6
 13. `verification_level` como campo de produto: define o que a UI pode afirmar sobre cada pagamento
 14. **Documento (CPF/CNPJ) é texto normalizado em caixa alta, nunca tipo numérico.** Validação aceita CNPJ numérico e alfanumérico desde a Fase 1

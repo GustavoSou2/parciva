@@ -20,7 +20,7 @@ export type TenantContext = { readonly tenantId: string };
 
 // Conexão base — nunca exportada. Quem precisar de banco passa por getDb().
 const pool = postgres(
-  process.env.DATABASE_URL ?? "postgresql://quitou:quitou@localhost:5432/quitou_dev",
+  process.env.DATABASE_URL ?? "postgresql://parciva:parciva@localhost:5432/parciva_dev",
 );
 const baseDb = drizzle(pool);
 

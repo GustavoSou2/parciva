@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { generateSlug, isValidSlug } from "./slug";
 
 describe("generateSlug", () => {
-  it('"Quitou Tecnologia" → "quitou-tecnologia"', () => {
-    expect(generateSlug("Quitou Tecnologia")).toBe("quitou-tecnologia");
+  it('"Parciva Tecnologia" → "parciva-tecnologia"', () => {
+    expect(generateSlug("Parciva Tecnologia")).toBe("parciva-tecnologia");
   });
 
   it('"André & Cia." → "andre-cia" (acento e caractere especial)', () => {
@@ -22,7 +22,7 @@ describe("generateSlug", () => {
 
 describe("isValidSlug", () => {
   it("detecta slug válido", () => {
-    expect(isValidSlug("quitou-tecnologia")).toBe(true);
+    expect(isValidSlug("parciva-tecnologia")).toBe(true);
     expect(isValidSlug("abc123")).toBe(true);
   });
 

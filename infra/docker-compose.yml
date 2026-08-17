@@ -2,26 +2,26 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: quitou
-      POSTGRES_PASSWORD: quitou
-      POSTGRES_DB: quitou_dev
+      POSTGRES_USER: parciva
+      POSTGRES_PASSWORD: parciva
+      POSTGRES_DB: parciva_dev
     ports:
       - "127.0.0.1:55432:5432"   # NUNCA 0.0.0.0 — Docker contorna o UFW; 5432 cai na faixa de exclusão dinâmica do Windows (netsh interface ipv4 show excludedportrange)
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U quitou"]
+      test: ["CMD-SHELL", "pg_isready -U parciva"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    command: redis-server --requirepass quitou --protected-mode yes
+    command: redis-server --requirepass parciva --protected-mode yes
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "quitou", "ping"]
+      test: ["CMD", "redis-cli", "-a", "parciva", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5

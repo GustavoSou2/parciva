@@ -1,6 +1,6 @@
 {
-  "name": "Quitou",
-  "description": "Design tokens extraidos do dashboard financeiro Quitou. Monocromatico com um unico acento menta. Compativel com tailwind.config.js (v3) via theme.extend.",
+  "name": "Parciva",
+  "description": "Design tokens extraidos do dashboard financeiro Parciva. Monocromatico com um unico acento menta. Compativel com tailwind.config.js (v3) via theme.extend.",
   "version": "1.0.0",
   "theme": {
     "extend": {

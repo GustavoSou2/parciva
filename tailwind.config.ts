@@ -8,7 +8,7 @@ export default {
   theme: {
     // Substitui a paleta padrão do Tailwind — não estende (setup.md
     // Parte 7.2). Sem isso, bg-blue-500/shadow-md continuariam
-    // existindo ao lado dos tokens do Quitou.
+    // existindo ao lado dos tokens do Parciva.
     colors: t.colors,
     fontSize: t.fontSize,
     borderRadius: t.borderRadius,

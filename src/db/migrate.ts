@@ -22,7 +22,7 @@ const migrationsFolder = path.join(path.dirname(fileURLToPath(import.meta.url)),
 
 async function main(): Promise<void> {
   const connectionString =
-    process.env.DATABASE_URL ?? "postgresql://quitou:quitou@localhost:5432/quitou_dev";
+    process.env.DATABASE_URL ?? "postgresql://parciva:parciva@localhost:5432/parciva_dev";
   const sql = postgres(connectionString, { max: 1 });
   const db = drizzle(sql);
 

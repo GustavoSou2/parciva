@@ -31,7 +31,7 @@ export type AdminDb = PostgresJsDatabase;
 const adminPool = postgres(
   process.env.ADMIN_DATABASE_URL ??
     process.env.DATABASE_URL ??
-    "postgresql://quitou:quitou@localhost:5432/quitou_dev",
+    "postgresql://parciva:parciva@localhost:5432/parciva_dev",
 );
 
 export function getAdminDb(): AdminDb {
