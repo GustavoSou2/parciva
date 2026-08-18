@@ -49,4 +49,6 @@ export interface RawReceipt {
   readonly sizeBytes: number;
   readonly source: ReceiptSource;
   readonly receivedAt: Date;
+  /** E.164, sem prefixo `whatsapp:` — quem mandou, quando `source === "whatsapp"`. Usado na identificação de pagador (spec §6.3) — Marco 4. */
+  readonly fromPhone?: string;
 }

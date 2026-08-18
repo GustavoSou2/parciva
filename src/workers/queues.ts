@@ -16,6 +16,8 @@ export interface ReceiptJobData {
   readonly mimeType: string;
   readonly source: RawReceipt["source"];
   readonly receivedAt: string;
+  /** E.164, sem prefixo `whatsapp:` — ver `RawReceipt.fromPhone`. */
+  readonly fromPhone?: string;
 }
 
 function redisUrl(): string {

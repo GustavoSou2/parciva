@@ -39,9 +39,19 @@ migração cresce linearmente com o número de clientes) e banco-por-tenant
 depois é uma das refatorações mais caras e arriscadas que existem (armadilha
 explícita da Fase 0 na spec). Se algum dia um cliente enterprise exigir
 isolamento físico, a resposta é deploy dedicado, não mudar a arquitetura
-base. Pendência real hoje: **não existe teste automatizado que conecte num
-Postgres vivo e exercite essa policy** — `tests/security/` está vazio e o
-script `test:tenant` aponta para um arquivo inexistente (ver PROGRESS.md).
+base.
+
+**Atualização (18/08/2026):** `tests/security/tenant-isolation.test.ts`
+agora existe e roda contra Postgres vivo (`script test:tenant`) — e, na
+primeira execução, pegou um bug real: a policy estava sendo ignorada
+porque o único role do banco de dev era superusuário. Ver decisão [13]
+para o porquê e a correção. `0004_ingestion_rls.sql` estendeu a mesma
+policy `tenant_isolation` para `receipts`, `receipt_extractions` e
+`inbound_messages` — `whatsapp_channels` ficou fora de propósito (é
+tabela raiz, mesmo motivo de `tenants`/`users`/`plans`, ver
+`src/db/schema/ingestion.ts`). Pendência que continua real: o teste
+cobre só as tabelas novas dessa tarefa — as 13 tabelas de domínio
+originais desta decisão ainda não têm teste de isolamento próprio.
 
 ---
 
@@ -70,9 +80,16 @@ resolve o problema de correção silenciosa de valor).
 meses") é resolvida por replay do ledger, não por confiança na memória de
 alguém. Em contrapartida, nenhum código de aplicação pode assumir que pode
 "consertar" um lançamento — precisa sempre modelar como reversão + novo
-lançamento. Hoje ainda não existe módulo de aplicação (`src/modules/ledger/`)
-que escreva nessa tabela — ela existe no schema e está protegida no banco,
-mas nenhum caso de uso a popula ainda.
+lançamento.
+
+**Atualização (18/08/2026):** `src/modules/ledger/` agora existe e escreve
+de verdade (`writeEntry`/`writeEntryTx`, usado por
+`reconciliation/infra/payment-repository.ts`). A proteção foi confirmada
+na prática, não só na teoria: uma tentativa de `DELETE` manual para
+limpar dados de verificação de teste foi bloqueada pela trigger
+(`ledger_entries é append-only (tentativa de DELETE)`) — o comportamento
+esperado, mesmo incomodando a limpeza de dev. Ver decisão [14] para a
+convenção de `direction`/`entry_type` usada pelo motor de alocação.
 
 ---
 
@@ -131,10 +148,16 @@ externo — risco R-02 e R-22 da spec).
 
 **Consequências:** Corpus de teste versionado com comprovantes reais
 anonimizados vira o ativo técnico mais valioso do projeto (ainda não
-existe — nenhum diretório `corpus/` no repositório hoje). Toda extração
-precisa gravar `cost_micros`, mas a tabela `receipt_extractions` que
-guardaria isso ainda não existe no schema — é uma pendência para persistir o
-resultado da cascata, hoje só logado no console pelo worker.
+existe — nenhum diretório `corpus/` no repositório hoje).
+
+**Atualização (18/08/2026):** `receipt_extractions` existe no schema desde
+`0003_gigantic_true_believers.sql` e o worker (`receipt-worker.ts`) grava
+nela de verdade (`tier`, `data`, `field_confidence`, `overall_confidence`)
+— não é mais só `console.log`. `cost_micros`/`input_tokens`/`output_tokens`
+continuam `NULL` porque nada além de OCR local roda em produção ainda (sem
+custo de token a registrar); passam a ser preenchidos quando VLM (Tier 3)
+for de fato plugado no worker. `runDeterministicExtraction` também deixou
+de ser stub — o worker chama `extractFromText` real.
 
 ---
 
@@ -230,11 +253,17 @@ arquivo direto por rota pública com token na URL (sem a garantia de
 
 **Consequências:** Capacidade de disco, backup e criptografia em repouso
 (LUKS + AES-256-GCM por arquivo) viram responsabilidade explícita do
-projeto, não algo terceirizado. Hoje `src/shared/storage.ts` (módulo
-previsto na estrutura da spec para escrita durável, caminho por hash e
-cifra) **ainda não existe** — o diretório `storage/receipts` está criado,
-mas nenhum código ainda grava nele seguindo o protocolo de durabilidade
-descrito acima.
+projeto, não algo terceirizado.
+
+**Atualização (18/08/2026):** `src/shared/storage.ts` agora existe e é
+usado de verdade pelo worker — mas é uma v1 deliberadamente mínima:
+escreve em arquivo temporário + `rename` atômico (garantia do próprio
+filesystem), sem o protocolo completo de durabilidade descrito acima
+(fsync do arquivo + fsync do diretório antes do commit no banco). Sem
+cifra em repouso ainda. `storage_key` é sempre construído com `/`
+(nunca `path.join` nativo) — bug real pego em dev no Windows, que gravava
+`storage_key` com `\` e quebraria a montagem de path no Nginx em
+produção (VPS Linux).
 
 ---
 
@@ -363,12 +392,24 @@ real do webhook ao banco, que a Fase 3 não entregou; ver PROGRESS.md).
 
 **Consequências:** Esta é uma decisão **temporária de sequenciamento**, não
 uma mudança de arquitetura-alvo — a spec continua recomendando número por
-tenant, e a tabela `whatsapp_channels` já está prevista no modelo de dados
-(ainda não criada no schema Drizzle). Enquanto o número for compartilhado,
-o produto não pode operar mais de um tenant real simultaneamente sem
-confundir a origem das mensagens — isso bloqueia a Fase 4 (onboarding
-self-service) e precisa ser resolvido antes de qualquer cliente real além
-do uso próprio do fundador.
+tenant. Enquanto o número for compartilhado, o produto não pode operar mais
+de um tenant real simultaneamente sem confundir a origem das mensagens —
+isso bloqueia a Fase 4 (onboarding self-service) e precisa ser resolvido
+antes de qualquer cliente real além do uso próprio do fundador.
+
+**Atualização (18/08/2026):** `whatsapp_channels` agora existe no schema
+(`0003_gigantic_true_believers.sql`) e a resolução de tenant a partir de
+`payload.To` está implementada de verdade em
+`src/modules/whatsapp/infra/channel-repository.ts` — o TODO citado acima
+("resolver o tenant a partir de `payload.To`") está fechado;
+`src/app/api/webhooks/whatsapp/route.ts` não tem mais `tenantId: ""`
+hardcoded. A tabela é tratada como **raiz** (fora da RLS, mesmo motivo de
+`tenants`/`users`/`plans`) porque resolver o tenant precisa acontecer
+*antes* de existir um `tenantId` para o `SET LOCAL` — ver decisão [13]. A
+limitação em si (um único número compartilhado, `seed.ts` cria uma única
+linha em `whatsapp_channels` apontando pra `TWILIO_WHATSAPP_FROM`)
+continua exatamente como descrita acima — só a mecânica de resolução
+deixou de ser TODO.
 
 ---
 
@@ -399,3 +440,298 @@ em `biome.json`. `pnpm check` é o gate único antes de commit — inclui lint,
 tipos, testes e a checagem de tokens de design (`check:tokens`), mas ainda
 não inclui `gitleaks` no fluxo automatizado do dia a dia (só existe como
 script `secrets:scan` separado).
+
+---
+
+## [13] Role de aplicação não-superusuário, separado do role de migração
+
+**Data:** 18/08/2026 (pego e corrigido durante a tarefa "conectar
+ingestão ao banco real")
+
+**Contexto:** A decisão [1] desenhou RLS com 4 camadas de defesa, mas até
+esta tarefa nenhum código de domínio tinha escrito no banco de verdade —
+então nunca tinha sido testado contra um Postgres vivo. Ao escrever
+`tests/security/tenant-isolation.test.ts` (o primeiro teste real da
+policy), todos os casos falharam: a sessão de um tenant enxergava e até
+conseguia inserir linha de outro. Investigação: `docker-compose.yml`
+define só `POSTGRES_USER=parciva`, que o Postgres cria como
+**superusuário** — e superusuário ignora RLS incondicionalmente, mesmo
+com `FORCE ROW LEVEL SECURITY` (a doc do Postgres é explícita: FORCE só
+afeta o dono não-superusuário; superusuário está sempre fora do alcance
+de qualquer policy). Ou seja: a camada 1 de defesa da decisão [1] nunca
+esteve realmente ativa no ambiente de desenvolvimento.
+
+**Decisão:** `infra/init-db.sql` (montado em
+`/docker-entrypoint-initdb.d/` no `docker-compose.yml`, roda uma vez na
+criação do volume) cria um segundo role, `parciva_app`, com
+`NOSUPERUSER NOBYPASSRLS`, e `ALTER DEFAULT PRIVILEGES FOR ROLE parciva`
+concedendo `SELECT/INSERT/UPDATE/DELETE` em toda tabela futura criada
+pelo dono — resolve o problema de ordem (o script roda antes de
+`pnpm db:migrate` criar qualquer tabela). `src/db/client.ts` (`getDb`/
+`getRootDb`, o único ponto de acesso ao banco para código de domínio)
+passa a conectar via uma variável nova, `APP_DATABASE_URL`, **sem
+fallback** para `DATABASE_URL` — um fallback silencioso reintroduziria
+exatamente o bug. `DATABASE_URL` continua sendo o role dono
+(superusuário), usado só por `migrate.ts`/`seed.ts`/`admin-client.ts`
+(que já documentava a necessidade de um role `BYPASSRLS` separado para o
+superadmin — agora essa separação é real nos dois sentidos: admin
+bypassa de propósito, app nunca bypassa).
+
+**Alternativas descartadas:** Confiar que produção já teria um role
+separado e não mexer no `docker-compose.yml` de dev (rejeitado — dev é
+onde qualquer regressão de RLS seria pega antes de produção; um ambiente
+de dev que não exercita a defesa real dá falsa confiança). Revogar
+`BYPASSRLS`/superusuário do role `parciva` existente em vez de criar um
+novo (rejeitado — quebraria `migrate.ts`/`db:generate`, que precisam de
+privilégio de DDL/dono de tabela).
+
+**Consequências:** Qualquer ambiente novo (staging, produção, CI) precisa
+replicar essa separação de role — não é suficiente copiar só
+`DATABASE_URL`. Se `APP_DATABASE_URL` não estiver configurado,
+`src/db/client.ts` cai no fallback hardcoded
+`postgresql://parciva_app:parciva_app@localhost:5432/parciva_dev`, que só
+existe se `infra/init-db.sql` tiver rodado — em produção isso precisa ser
+provisionado explicitamente (script equivalente ou `CREATE ROLE` manual),
+não existe automação fora do `docker-compose.yml` de dev ainda. O teste
+de isolamento (`tests/security/tenant-isolation.test.ts`) é o que garante
+que essa regressão específica não volta silenciosamente.
+
+---
+
+## [14] Convenção de direção do ledger e ordem de imputação
+
+**Data:** 18/08/2026 (Marco 1 do roadmap de fechamento das Fases 0–3 —
+motor de alocação + ledger)
+
+**Contexto:** A spec define `ledger_entries.direction ENUM(debit,
+credit)` (§5.2) mas não diz o que cada valor significa em termos de
+efeito sobre a dívida do contrato — só o schema, sem convenção. Sem
+definir isso antes de escrever o primeiro lançamento real, cada caso de
+uso inventaria sua própria leitura, e o ledger deixaria de ser
+consistente consigo mesmo (quebra §6.1: "capaz de *replay*").
+
+**Decisão:** `direction: "credit"` reduz a dívida do contrato (pagamento
+aplicado); `direction: "debit"` aumenta a dívida (reversão de um
+`credit` anterior, ou lançamento de ajuste). `amount_cents` é sempre a
+magnitude (positiva) do lançamento — o sinal do efeito vem só de
+`direction`, nunca de um `amount_cents` negativo. `entry_type` (texto
+livre no schema) usa `"payment_applied"`, `"payment_reversed"` e
+`"credit_balance_created"` neste marco — outros casos de uso que vierem
+a escrever no ledger devem seguir o mesmo padrão de nome
+(`substantivo_verbo_no_particípio`), não inventar convenção nova.
+`rule_version` grava `"alloc-v1"` (constante em
+`reconciliation/infra/payment-repository.ts`) — trocar essa constante
+sempre que a lógica de `allocatePayment` mudar de forma que afete o
+resultado, para permitir replay fiel (§6.1).
+
+Dentro de uma parcela, o valor alocado é dividido em linhas
+`payment_allocations.kind` na ordem juros → multa → principal (spec
+§6.5, último parágrafo). Como `installments.paid_cents` é um valor
+agregado (o schema não separa quanto já foi pago de cada balde), o
+motor (`reconciliation/domain/allocation-engine.ts`,
+`remainingByKind`) assume que todo pagamento anterior já foi aplicado
+nessa mesma ordem — premissa que só se sustenta porque este é o único
+código que escreve `paid_cents`. Se algum dia outro caminho vier a
+gravar `paid_cents` diretamente (ex.: importação em massa), essa
+premissa quebra silenciosamente — deve ser revisada nesse momento.
+
+**Alternativas descartadas:** Deixar `direction` sem convenção escrita e
+decidir caso a caso (rejeitado — é exatamente o tipo de ambiguidade que
+gera replay inconsistente, o motivo de existir a decisão [1] do §6.1).
+Separar `paid_cents` em `paid_interest_cents`/`paid_fine_cents`/
+`paid_principal_cents` no schema para não depender da premissa de ordem
+(rejeitado por ora — mudança de schema maior do que o Marco 1 pedia;
+registrado como possível revisão futura se a premissa se provar frágil).
+
+**Consequências:** Qualquer novo caso de uso que escreva em
+`ledger_entries` (ex.: Marco 4 — decisão automática vs. revisão via IA,
+ou Fase 6 — webhook do PSP) precisa seguir esta convenção, não inventar
+a própria. `early_payment_policy: "reduce_amount"` não foi implementada
+neste marco (cai em `credit_balance`) porque redistribuir
+`amount_cents` de parcelas futuras é reestruturação de cronograma, não
+alocação de um pagamento — não é lançamento de ledger no sentido desta
+decisão, é mudança de dado em `installments` que ainda não tem desenho
+próprio.
+
+---
+
+## [15] Autenticação: sessão opaca em Postgres, Argon2id, MFA adiado
+
+**Data:** 18/08/2026 (Marco 2 do roadmap de fechamento das Fases 0–3 —
+autenticação e sessão)
+
+**Contexto:** A spec (§3.1) recomenda "Auth.js (ou Lucia) com sessões no
+Postgres próprio" e (§10.2) exige Argon2id, MFA obrigatório para owner/
+admin, CSRF em rota com cookie, rate limit no login. Até este marco não
+existia autenticação nenhuma — `users.passwordHash` nunca era escrito
+por código nenhum, `resolveTenantContext` esperava um `sessionUserId`
+que nada produzia.
+
+**Decisão:**
+- **Sessão hand-rolled, não Auth.js/Lucia.** Token opaco de 32 bytes
+  (`crypto.randomBytes`), guardado no cookie `httpOnly`/`SameSite=Lax`;
+  o banco (`sessions.id`) guarda só o **hash SHA-256** do token, nunca o
+  valor bruto — um vazamento do banco não basta pra sequestrar sessão
+  de ninguém (mesmo raciocínio de `hashTransactionRef` em
+  `reconciliation/infra/payment-repository.ts`). Preferido a uma lib de
+  auth pronta pelo mesmo motivo da decisão [6] (Twilio manual em vez do
+  SDK): o projeto já hand-rola integrações inteiras quando o ganho de
+  uma dependência não compensa a superfície extra — sessão opaca em
+  Postgres é ~200 linhas, não justifica puxar um framework.
+- **Hash de senha: `@node-rs/argon2`.** Binário pré-compilado
+  (napi-rs) — funciona no Windows (ambiente principal de
+  desenvolvimento, mesmo motivo da decisão [12]) sem toolchain de build
+  nativo, ao contrário do pacote `argon2` clássico (node-gyp).
+- **Defesa de sessão em duas camadas**, mesmo padrão de defesa em
+  profundidade da decisão [1]: `src/middleware.ts` (runtime Edge) só
+  checa presença do cookie — rápido, mas não pode validar contra o
+  banco porque `postgres-js` exige socket TCP cru, que Edge não
+  oferece (mesmo motivo do webhook do WhatsApp rodar em `runtime:
+  "nodejs"`, não Edge). A validação real (hash contra `sessions`,
+  expiração) acontece em `identity/application/require-session.ts`,
+  chamada por cada rota protegida.
+- **CSRF sem armazenamento próprio.** Token derivado via
+  `HMAC(SESSION_SECRET, hash_da_sessão)` — recalculável a qualquer
+  momento a partir do que já está persistido, sem tabela nem coluna
+  nova. Comparação em tempo constante (`timingSafeEqual`).
+- **Convite modelado como `membership` com `accepted_at: null`** (não
+  uma entidade própria) — o schema (`tenancy.ts`) já tinha
+  `invited_by`/`accepted_at` desde a fundação, só faltava algo
+  escrevendo neles. `invite_tokens` (tabela nova) é só o token que
+  entrega o link a alguém que ainda não tem sessão.
+- **`sessions`/`invite_tokens` são tabelas raiz** (sem RLS) — resolver
+  sessão ou validar convite precisa acontecer antes de qualquer
+  `tenantId` existir, mesmo motivo de `whatsapp_channels`/`users`
+  ficarem fora da RLS.
+- **MFA adiado, deliberadamente.** A spec marca obrigatório pra owner/
+  admin, mas TOTP completo (segredo, QR code, códigos de recuperação) é
+  escopo grande por si só — login básico entra primeiro, testável no
+  navegador; MFA vira marco próprio. `users.mfaEnabled`/`mfaSecretRef`
+  já existem no schema, prontos para receber.
+- **Sem verificação contra senha vazada** (HaveIBeenPwned ou similar,
+  citado na spec §10.2) — exigiria integração com serviço externo, fora
+  do escopo deste marco. Política hoje é só comprimento mínimo (8
+  caracteres).
+
+**Alternativas descartadas:** JWT stateless (rejeitado pela própria
+spec — sessão em Postgres é revogável, JWT não é sem infraestrutura
+extra de blocklist); Auth.js/Lucia (rejeitado — ver acima, dependência
+não compensa pra sessão opaca simples); tabela separada de "invites"
+com seus próprios campos de tenant/role (rejeitado — duplicaria o que
+`memberships` já modela, `invite_tokens` só precisa ser o token).
+
+**Consequências:** Qualquer rota nova sob autenticação precisa chamar
+`requireSession` explicitamente (não há middleware Node validando de
+verdade) — esquecer isso é a forma mais provável de introduzir um
+buraco de autorização no futuro; vale revisar quando o Marco 3 trouxer
+as primeiras páginas protegidas de verdade. Envio real de e-mail
+(convite, boas-vindas, reset de senha) continua em aberto — hoje só
+loga o link, registrado em PROGRESS.md.
+
+---
+
+## [16] UI do Marco 3: Server Actions, não API route + fetch
+
+**Data:** 18/08/2026 (Marco 3 do roadmap — telas de Contratos e
+Pagadores)
+
+**Contexto:** As telas de auth (Marco 2) usam o padrão API route
+(`route.ts`) + `fetch` do lado do cliente (`"use client"`, `useState`,
+`onSubmit`). Pra Contratos/Pagadores (4 formulários novos: criar
+pagador, criar contrato, registrar pagamento, reverter pagamento), o
+mesmo padrão significaria 4 rotas de API novas + 4 componentes cliente
+só pra serializar `FormData`→JSON e tratar erro.
+
+**Decisão:** Server Actions do Next.js (`"use server"`), com
+`<form action={fn}>` — sem componente cliente pra maioria das telas
+(só `payers/actions.ts`/`contracts/actions.ts`, chamados diretamente
+pelo atributo `action` do `<form>`, com `tenantSlug` etc. amarrados via
+`.bind(null, ...)`). Cada Server Action chama `requireTenantSession
+(tenantSlug)` no próprio corpo — não confia em nada que a página tenha
+validado antes, porque uma Server Action é um endpoint próprio, exposto
+independente de qual página a invocou. Erros de validação viram
+`redirect` de volta pro formulário com `?error=<código>` na query
+string (mapeado pra rótulo em português na própria página) — não há
+"error boundary" próprio ainda, é o mecanismo mais simples que funciona
+com formulário HTML puro.
+
+Next.js já protege Server Actions contra CSRF checando o header
+`Origin` automaticamente (desde a v14) — por isso o token HMAC de
+`identity/domain/session.ts` (decisão [15]) não precisa ser checado
+manualmente aqui. Isso deixa mais visível ainda que `/api/team/invite`
+(Marco 2, uma API route "crua") nunca chegou a checar esse token —
+lacuna registrada em PROGRESS.md, não corrigida neste marco.
+
+**Alternativas descartadas:** Manter o padrão API route + fetch do
+Marco 2 pras telas novas (rejeitado — 4x o boilerplate de serialização/
+tratamento de erro sem ganho real, já que nenhuma dessas telas precisa
+de interatividade rica que justifique JavaScript de cliente).
+
+**Consequências:** Daqui pra frente, formulário simples (submit → grava
+→ redireciona) usa Server Action; só interatividade de verdade (typeahead,
+validação em tempo real, etc.) justifica voltar a um componente cliente
+com `fetch`. `StatusChip` (`src/ui/components/StatusChip.tsx`) ganhou 6
+chaves novas pra cobrir `installments.status`/`payments.status ===
+"reversed"` — mesma disciplina de zero cor semântica da decisão de
+design da spec §13.1 (peso de borda + decoração + posição, nunca
+matiz); `reversed` tem rótulo próprio ("Estornado"), nunca reusa
+"Rejeitado" (spec §13.3: nomear com precisão pelo que aconteceu).
+`payments` não tem `contract_id` direto no schema (spec §5.2) —
+`listPaymentsByContract` precisa passar por `payment_allocations →
+installments.contract_id`; qualquer código futuro que precise de
+"pagamentos de um contrato" deve reusar essa função, não reinventar o
+join.
+
+## [17] Risco/fraude em §6.6 é no-op documentado até a Fase 5
+
+**Data:** 18/08/2026 (Marco 4 do roadmap — ligar ingestão ao motor)
+
+**Contexto:** A spec §6.6 lista risco/fraude como parte das condições
+para auto-aplicar um pagamento vindo de comprovante: "`risk_score`
+abaixo do limiar" e "nenhum `fraud_check` com resultado `fail`". O
+módulo `fraud` não existe — é trabalho da Fase 5 (fora do roadmap desta
+sessão, que cobre só débito das Fases 0–3). Implementar `auto-apply-
+decision.ts` sem alguma resposta pra essas duas condições deixaria a
+lacuna escondida dentro do código, sem registro — o tipo de coisa que
+CLAUDE.md pede pra eu parar e avisar antes de decidir sozinho (o
+invariante 5, "na dúvida, revisão humana", é exatamente o que essas
+condições reforçam).
+
+Perguntei ao usuário antes de implementar: tratar como bloqueio total
+(nunca auto-aplicar nenhum comprovante até o módulo de fraude existir)
+ou como no-op documentado (as outras condições do §6.6 continuam
+valendo de verdade, risco/fraude simplesmente não soma nem subtrai
+nada à decisão). Confirmado: **no-op documentado**.
+
+**Decisão:** `reconciliation/domain/auto-apply-decision.ts`
+(`decideAutoApply`) não recebe nenhum parâmetro de risco/fraude — a
+função inteira nunca menciona os dois. As outras seis condições do
+§6.6 continuam obrigatórias e reais: confiança ≥ 0,90; nenhum campo
+crítico em `field_confidence` abaixo de 0,85 quando presente;
+identificação por telefone ou documento (nunca por nome); alocação sem
+sobra (`remainingCents === 0`); data paga plausível (não futura, não
+mais de 30 dias no passado); valor dentro do teto de auto-aprovação
+(`tenants.settings.autoApprovalCeilingCents`, default R$ 5.000).
+Qualquer uma falhando cai em `needs_review` — nunca em `rejected`
+sozinho (a spec também proíbe isso).
+
+**Alternativas descartadas:** Bloquear toda auto-aplicação até a Fase 5
+(rejeitado pelo usuário — travaria o marco inteiro por uma peça que não
+está no escopo combinado, e as outras seis condições já formam uma
+barreira real, não uma barreira de fachada). Adicionar uma coluna
+`risk_score` em `reconciliation_proposals` já preparada para o futuro
+(rejeitado — não há nada real para gravar ali ainda; uma coluna sempre
+nula seria promessa vazia, não preparação).
+
+**Consequências:** Quando o módulo `fraud` existir (Fase 5),
+`decideAutoApply` ganha um parâmetro a mais e uma condição a mais — não
+é uma reescrita, é extensão do que já existe. Até lá, um comprovante
+poderia teoricamente ser auto-aplicado mesmo sendo fraudulento, desde
+que passe em todas as outras seis condições reais — risco aceito
+conscientemente pelo usuário para este marco, registrado aqui e em
+PROGRESS.md com destaque (não escondido em comentário de código). O
+mesmo raciocínio de no-op vale para `field_confidence`: nenhum tier
+hoje (determinístico, OCR) preenche essa chave por campo, então a
+condição relacionada nunca dispara na prática até um tier futuro (VLM)
+começar a populá-la — não é uma lacuna nova, é a mesma ausência que já
+existia antes deste marco, agora só formalmente conectada à decisão.

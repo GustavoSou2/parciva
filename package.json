@@ -23,6 +23,7 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.1.0",
     "bullmq": "^5.0.0",
     "drizzle-orm": "^0.36.0",
     "ioredis": "^5.4.0",

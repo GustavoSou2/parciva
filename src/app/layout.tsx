@@ -9,8 +9,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="pt-BR">
-      <body>{children}</body>
+    // Extensões de navegador (LanguageTool, Grammarly etc.) injetam
+    // atributos em <html> antes do React hidratar — suppressHydrationWarning
+    // aqui é o mitigador recomendado pela própria doc do Next.js pra esse
+    // caso específico, não esconde um mismatch real de conteúdo.
+    <html lang="pt-BR" suppressHydrationWarning>
+      <body className="min-h-screen bg-surface-canvas font-sans text-body text-content-primary antialiased">
+        {children}
+      </body>
     </html>
   );
 }

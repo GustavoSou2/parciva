@@ -29,9 +29,14 @@ describe("extractFromText — valor", () => {
 });
 
 describe("extractFromText — data", () => {
-  it("extrai data em dd/mm/aaaa", () => {
+  it("não extrai paid_at quando só a data aparece, sem hora (nunca chuta meia-noite)", () => {
     const result = extractFromText("Pagamento realizado em 12/08/2026.");
-    expect(result.paid_at).toBe("2026-08-12");
+    expect(result.paid_at).toBeUndefined();
+  });
+
+  it("extrai data e hora com offset -03:00 (horário local, nunca Z)", () => {
+    const result = extractFromText("Pagamento realizado em 12/08/2026 às 14:30.");
+    expect(result.paid_at).toBe("2026-08-12T14:30:00-03:00");
   });
 });
 

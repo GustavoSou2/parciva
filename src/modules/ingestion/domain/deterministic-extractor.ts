@@ -75,18 +75,21 @@ function extractAmount(text: string): Partial<ExtractionOutput> {
 
 /**
  * Hora ausente não vira "00:00:00" — isso seria chutar um horário que o
- * texto não informou. Sem hora, `paid_at` fica só com a data (ISO
- * `AAAA-MM-DD`), que ainda é informação verdadeira.
+ * texto não informou; sem hora, `paid_at` fica AUSENTE (não um valor
+ * inventado). Com hora, o comprovante brasileiro de PIX mostra horário
+ * local (America/Sao_Paulo, sem DST desde 2019) — produz `-03:00`
+ * explícito, nunca `Z` (que seria afirmar UTC, informação que o texto
+ * não dá). `z.string().datetime({ offset: true })` (extraction-schema.ts)
+ * exige exatamente esse formato com offset numérico.
  */
 function extractPaidAt(text: string): Partial<ExtractionOutput> {
   const match = DATE_REGEX.exec(text);
   if (!match) return {};
 
   const [, day, month, year, hour, minute] = match;
-  const paid_at =
-    hour && minute ? `${year}-${month}-${day}T${hour}:${minute}:00` : `${year}-${month}-${day}`;
+  if (!hour || !minute) return {};
 
-  return { paid_at };
+  return { paid_at: `${year}-${month}-${day}T${hour}:${minute}:00-03:00` };
 }
 
 /**

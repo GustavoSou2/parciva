@@ -3,10 +3,17 @@
  * `sendWelcomeEmail` (passo 6) é best-effort: o tenant e o owner já
  * foram persistidos quando o e-mail é disparado, então uma falha ali
  * não desfaz o cadastro — só o e-mail de boas-vindas não sai.
+ *
+ * `ownerPassword` entrou no Marco 2 (autenticação) — sem senha, o owner
+ * nasce sem forma nenhuma de logar depois. Hasheada aqui (Argon2id,
+ * `shared/password.ts`) antes de chegar em `deps.saveUser` — a senha em
+ * texto puro nunca atravessa a fronteira `application`→`infra`.
  */
 
 import type { Result } from "@/shared/result";
-import { err, ok } from "@/shared/result";
+import { err, isErr, ok } from "@/shared/result";
+import { hashPassword } from "@/shared/password";
+import { validatePassword, type PasswordPolicyError } from "@/modules/identity";
 import type { PlanLimits } from "@/modules/billing";
 import type { MembershipRole } from "@/modules/identity";
 import { generateSlug } from "../domain/slug";
@@ -23,12 +30,14 @@ export type NewTenant = {
 export type NewUser = {
   email: string;
   name: string;
+  passwordHash: string;
 };
 
 export type CreateTenantInput = {
   name: string;
   ownerEmail: string;
   ownerName: string;
+  ownerPassword: string;
   planCode: string;
 };
 
@@ -41,12 +50,19 @@ export interface CreateTenantDeps {
   sendWelcomeEmail(email: string, name: string): Promise<void>;
 }
 
+export type CreateTenantError =
+  | "plan_not_found"
+  | "slug_conflict"
+  | "save_failed"
+  | PasswordPolicyError;
+
 export async function createTenant(
   input: CreateTenantInput,
   deps: CreateTenantDeps,
-): Promise<
-  Result<{ tenantId: string; slug: string }, "plan_not_found" | "slug_conflict" | "save_failed">
-> {
+): Promise<Result<{ tenantId: string; slug: string; userId: string }, CreateTenantError>> {
+  const passwordCheck = validatePassword(input.ownerPassword);
+  if (isErr(passwordCheck)) return passwordCheck;
+
   const limits = await deps.getPlanLimits(input.planCode);
   if (!limits) {
     return err("plan_not_found");
@@ -63,6 +79,8 @@ export async function createTenant(
     candidateSlug = `${baseSlug}-${attempt + 1}`;
   }
 
+  const passwordHash = await hashPassword(input.ownerPassword);
+
   let tenantId: string;
   let userId: string;
   try {
@@ -72,7 +90,11 @@ export async function createTenant(
       status: "trial",
       planCode: input.planCode,
     }));
-    ({ userId } = await deps.saveUser({ email: input.ownerEmail, name: input.ownerName }));
+    ({ userId } = await deps.saveUser({
+      email: input.ownerEmail,
+      name: input.ownerName,
+      passwordHash,
+    }));
     await deps.saveMembership(tenantId, userId, "owner");
   } catch {
     return err("save_failed");
@@ -84,5 +106,5 @@ export async function createTenant(
     // best-effort — falha no e-mail de boas-vindas não reverte o tenant.
   }
 
-  return ok({ tenantId, slug: candidateSlug });
+  return ok({ tenantId, slug: candidateSlug, userId });
 }

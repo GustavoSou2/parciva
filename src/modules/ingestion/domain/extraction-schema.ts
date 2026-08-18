@@ -53,7 +53,7 @@ const RawExtractionOutputSchema = z
     is_payment_receipt: z.boolean(),
     method: z.enum(["pix", "ted", "doc", "boleto", "card", "cash", "other", "unknown"]).optional(),
     amount_cents: z.number().int().min(0).nullable().optional(),
-    paid_at: z.string().datetime().nullable().optional(),
+    paid_at: z.string().datetime({ offset: true }).nullable().optional(),
     transaction_ref: z.string().nullable().optional(),
     payer_name: z.string().nullable().optional(),
     payer_document_masked: z.string().nullable().optional(),

@@ -69,9 +69,47 @@ export const users = pgTable("users", {
 }));
 
 /**
+ * Sessão de login — spec §3.1 ("sessões no Postgres próprio", não JWT
+ * stateless: revogável, auditável). `id` é o HASH SHA-256 do token —
+ * o token bruto nunca é persistido, só existe no cookie do navegador
+ * (mesmo raciocínio de `hashTransactionRef` em `reconciliation/infra/
+ * payment-repository.ts`: um vazamento do banco não deveria bastar pra
+ * sequestrar sessão de ninguém). Tabela raiz — resolver sessão é
+ * exatamente o problema de bootstrap que tira `whatsapp_channels` da
+ * RLS (ver comentário lá): não existe `tenantId` até o cookie virar um
+ * `userId`.
+ */
+export const sessions = pgTable("sessions", {
+  id: text("id").primaryKey(), // hash do token, não o token
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userAgent: text("user_agent"),
+  ip: text("ip"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+/**
+ * Token de convite — ativa uma `membership` criada com `accepted_at:
+ * null` (ver comentário em `memberships` abaixo). `id` é hash do token,
+ * mesmo raciocínio de `sessions`. Também raiz: quem abre o link ainda
+ * não tem sessão nem tenant resolvido.
+ */
+export const inviteTokens = pgTable("invite_tokens", {
+  id: text("id").primaryKey(), // hash do token, não o token
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+/**
  * Une usuário a tenant com um papel. É esta tabela que a RLS de
  * `memberships` e as policies das tabelas de domínio consultam para
  * decidir se um usuário pode agir num tenant — ver 0001_rls.sql.
+ *
+ * Convite (spec §14 Fase 0) não é uma entidade separada: é esta linha
+ * criada com `accepted_at: null` + um `invite_tokens` correspondente —
+ * aceitar o convite define a senha do usuário e marca `accepted_at`.
  */
 export const memberships = pgTable("memberships", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -150,9 +188,19 @@ export const tenantsRelations = relations(tenants, ({ many, one }) => ({
 
 export const usersRelations = relations(users, ({ many }) => ({
   memberships: many(memberships),
+  sessions: many(sessions),
 }));
 
 export const membershipsRelations = relations(memberships, ({ one }) => ({
   tenant: one(tenants, { fields: [memberships.tenantId], references: [tenants.id] }),
   user: one(users, { fields: [memberships.userId], references: [users.id] }),
+}));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, { fields: [sessions.userId], references: [users.id] }),
+}));
+
+export const inviteTokensRelations = relations(inviteTokens, ({ one }) => ({
+  user: one(users, { fields: [inviteTokens.userId], references: [users.id] }),
+  tenant: one(tenants, { fields: [inviteTokens.tenantId], references: [tenants.id] }),
 }));

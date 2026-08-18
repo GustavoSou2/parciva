@@ -3,4 +3,20 @@ export type { TenantStatus, TenantTransition, TransitionEvent } from "./domain/t
 export { transition, isOperational, isReadOnly } from "./domain/lifecycle";
 export { generateSlug, isValidSlug } from "./domain/slug";
 export { createTenant } from "./application/create-tenant";
-export type { CreateTenantDeps, CreateTenantInput, NewTenant, NewUser } from "./application/create-tenant";
+export type {
+  CreateTenantDeps,
+  CreateTenantError,
+  CreateTenantInput,
+  NewTenant,
+  NewUser,
+} from "./application/create-tenant";
+export {
+  slugExists,
+  getPlanLimits,
+  getTenantSlugById,
+  getAutoApprovalCeilingCents,
+  saveTenant,
+  saveUser,
+  saveMembership,
+  sendWelcomeEmail,
+} from "./infra/tenant-repository";

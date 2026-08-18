@@ -2,25 +2,49 @@
  * Worker BullMQ que processa jobs de `receipt-processing` — spec §3.2.
  * Concorrência 1: OCR local disputa CPU com Postgres/Redis na mesma VPS
  * (risco C-30) — um job por vez evita saturar o recurso compartilhado.
+ * A mesma serialização é o que torna seguro o dedupe "soft" (SELECT, não
+ * claim atômico) de `receiptExistsByHash` — ver comentário em
+ * `receipt-repository.ts`.
  *
- * Nunca importa `db` diretamente — `checkDuplicate` e
- * `runDeterministicExtraction` de `ingestReceipt` entram via stub até o
- * banco estar conectado (tarefa futura). `runOcrExtraction` (Tier 2,
- * spec §7.1) já é real. VLM (Tier 3, `anthropic-vlm.ts`) segue existindo
- * no módulo `ingestion`, mas não é usado aqui por ora — sem VLM na
- * cascata, imagem com confiança baixa após OCR vai para revisão humana,
- * não para o modelo pago (ver `application/ingest-receipt.ts`).
+ * `runOcrExtraction` (Tier 2, spec §7.1) e `runDeterministicExtraction`
+ * (Tier 1) já são reais. VLM (Tier 3, `anthropic-vlm.ts`) segue
+ * existindo no módulo `ingestion`, mas não é usado aqui por ora — sem
+ * VLM na cascata, imagem com confiança baixa após OCR vai para revisão
+ * humana, não para o modelo pago (ver `application/ingest-receipt.ts`).
+ *
+ * Persistência roda AQUI, depois de `ingestReceipt` resolver — não
+ * dentro de `IngestDeps` — porque `application/ingest-receipt.ts`
+ * documenta explicitamente que nunca importa db/storage/HTTP
+ * diretamente, e o resultado (`ExtractionOutput`) já é tudo que este
+ * arquivo precisa para gravar `receipts`/`receipt_extractions`.
  */
 
 import { Worker, type Job } from "bullmq";
 import type { TenantContext } from "@/db/client";
 import {
+  computeHash,
+  createReceipt,
+  extractFromText,
   extractTextFromImage,
   ingestReceipt,
+  receiptExistsByHash,
+  saveExtraction,
+  updateReceiptStatus,
+  type ExtractionTier,
   type IngestDeps,
   type RawReceipt,
 } from "@/modules/ingestion";
-import { isErr, isOk } from "@/shared/result";
+import { listPayers } from "@/modules/payers";
+import { listContractsByPayer, listInstallmentsByContract } from "@/modules/contracts";
+import {
+  createProposal,
+  executeReceiptPayment,
+  processReceiptExtraction,
+  type ProcessReceiptExtractionDeps,
+} from "@/modules/reconciliation";
+import { getAutoApprovalCeilingCents } from "@/modules/tenant";
+import { saveReceiptFile } from "@/shared/storage";
+import { isErr } from "@/shared/result";
 import { RECEIPT_QUEUE, type ReceiptJobData } from "./queues";
 
 function redisUrl(): string {
@@ -31,22 +55,55 @@ function redisUrl(): string {
   return url;
 }
 
-// TODO: substituir pelos deps reais quando o banco estiver conectado —
-// checkDuplicate/runDeterministicExtraction ainda são stub.
-const deps: IngestDeps = {
-  checkDuplicate: () => Promise.resolve(false),
-  runDeterministicExtraction: () => ({}),
-  runOcrExtraction: extractTextFromImage,
+/** Mapeamento mime→extensão limitado aos tipos que `normalizeMime` reconhece (Tier 0). */
+const EXT_BY_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+};
+
+function extFromMime(mimeType: string): string {
+  return EXT_BY_MIME[mimeType] ?? "bin";
+}
+
+function buildDeps(ctx: TenantContext): IngestDeps {
+  return {
+    checkDuplicate: (hash) => receiptExistsByHash(ctx, hash),
+    runDeterministicExtraction: extractFromText,
+    runOcrExtraction: extractTextFromImage,
+  };
+}
+
+function buildReconciliationDeps(ctx: TenantContext): ProcessReceiptExtractionDeps {
+  return {
+    listPayers: () => listPayers(ctx),
+    listContractsByPayer: (payerId) => listContractsByPayer(ctx, payerId),
+    listInstallmentsByContract: (contractId) => listInstallmentsByContract(ctx, contractId),
+    getAutoApprovalCeilingCents: () => getAutoApprovalCeilingCents(ctx.tenantId),
+    executeReceiptPayment: (input) => executeReceiptPayment(ctx, input),
+    createProposal: (data) => createProposal(ctx, data),
+  };
+}
+
+/** Erro de negócio (não duplicado) → `receipts.status` final quando não há extração para salvar. */
+const REJECTED_STATUS_BY_ERROR: Partial<Record<string, "rejected" | "failed">> = {
+  unsupported_mime: "rejected",
+  not_a_receipt: "rejected",
+  validation_failed: "rejected",
+  extraction_failed: "failed",
 };
 
 /**
  * Exceção não tratada aqui propaga para o BullMQ, que reencaminha o job
- * conforme `attempts`/`backoff` (defaultJobOptions em `queues.ts`) — só
- * o resultado de negócio (`Result` de `ingestReceipt`) é logado, nunca
- * lançado, pois não é falha de infraestrutura (CLAUDE.md, spec §3.3).
+ * conforme `attempts`/`backoff` (defaultJobOptions em `queues.ts`) — a
+ * persistência abaixo não é envolvida em try/catch de propósito: falha
+ * de banco/storage é infraestrutura, não resultado de negócio, e deve
+ * propagar (CLAUDE.md, spec §3.3). Só o `Result` de `ingestReceipt` é
+ * logado, nunca lançado.
  */
 async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
-  const { tenantId, receiptId, mimeType, buffer, source, receivedAt } = job.data;
+  const { tenantId, receiptId, mimeType, buffer, source, receivedAt, fromPhone } = job.data;
   console.log("[receipt-worker] processando job", { tenantId, receiptId, mimeType });
 
   const bufferBytes = Buffer.from(buffer, "base64");
@@ -56,33 +113,82 @@ async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
     sizeBytes: bufferBytes.length,
     source,
     receivedAt: new Date(receivedAt),
+    ...(fromPhone ? { fromPhone } : {}),
   };
 
   const ctx: TenantContext = { tenantId };
-  const result = await ingestReceipt(ctx, raw, deps);
+  const result = await ingestReceipt(ctx, raw, buildDeps(ctx));
+
+  if (isErr(result) && result.error === "duplicate") {
+    // Corpo já existe em `receipts` (dedupe por content_hash) — inclusive
+    // o caso de retry do BullMQ após falha depois de já ter persistido:
+    // o próximo checkDuplicate acha a linha e cai aqui, sem duplicar nada.
+    console.log("[receipt-worker] comprovante duplicado, ignorando", { receiptId });
+    return;
+  }
+
+  // Original preservado para perícia (spec §8) — nunca o buffer normalizado.
+  const contentHash = computeHash(bufferBytes);
+  const storageKey = await saveReceiptFile(tenantId, contentHash, extFromMime(mimeType), bufferBytes);
+  await createReceipt(ctx, {
+    id: receiptId,
+    source,
+    storageKey,
+    mimeType,
+    sizeBytes: bufferBytes.length,
+    contentHash,
+    receivedAt: new Date(receivedAt),
+  });
 
   if (isErr(result)) {
     console.error("[receipt-worker] ingestReceipt retornou erro", {
       receiptId,
       error: result.error,
     });
-  } else {
-    console.log("[receipt-worker] ingestReceipt concluído", {
-      receiptId,
-      confidence: result.value.confidence,
-    });
+    await updateReceiptStatus(ctx, receiptId, REJECTED_STATUS_BY_ERROR[result.error] ?? "failed");
+    return;
   }
 
-  if (isOk(result)) {
-    console.log("[receipt-worker] campos extraídos:", JSON.stringify({
-      method: result.value.method,
-      amount_cents: result.value.amount_cents,
-      paid_at: result.value.paid_at,
-      transaction_ref: result.value.transaction_ref,
-      payer_name: result.value.payer_name,
-      institution: result.value.institution,
-    }, null, 2))
-  }
+  console.log("[receipt-worker] ingestReceipt concluído", {
+    receiptId,
+    confidence: result.value.confidence,
+  });
+  console.log(
+    "[receipt-worker] campos extraídos:",
+    JSON.stringify(
+      {
+        method: result.value.method,
+        amount_cents: result.value.amount_cents,
+        paid_at: result.value.paid_at,
+        transaction_ref: result.value.transaction_ref,
+        payer_name: result.value.payer_name,
+        institution: result.value.institution,
+      },
+      null,
+      2,
+    ),
+  );
+
+  const isImage = mimeType.startsWith("image/");
+  const tier: ExtractionTier = isImage ? "ocr" : "deterministic";
+  await saveExtraction(ctx, {
+    receiptId,
+    tier,
+    data: result.value,
+    fieldConfidence: result.value.field_confidence,
+    overallConfidence: result.value.confidence,
+  });
+
+  const reconciliationOutcome = await processReceiptExtraction(
+    ctx,
+    { receiptId, extraction: result.value, ...(fromPhone ? { fromPhone } : {}) },
+    buildReconciliationDeps(ctx),
+  );
+  console.log("[receipt-worker] processReceiptExtraction concluído", {
+    receiptId,
+    outcome: reconciliationOutcome,
+  });
+  await updateReceiptStatus(ctx, receiptId, reconciliationOutcome === "applied" ? "applied" : "review");
 }
 
 export const receiptWorker = new Worker<ReceiptJobData>(RECEIPT_QUEUE, processReceiptJob, {

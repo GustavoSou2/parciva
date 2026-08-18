@@ -20,6 +20,21 @@ const STATUS = {
   rejected: { label: "Rejeitado", style: "border-line-strong line-through text-content-primary" },
   overdue: { label: "Vencido", style: "border-line-strong text-content-primary" },
   unverified: { label: "Registrado manualmente", style: "border-line-hairline text-content-muted" },
+  // `installments.status` (spec §5.2) — Marco 3. Mesma disciplina: sem
+  // cor, só peso de borda/decoração. "overdue" acima já cobre parcela
+  // vencida — não duplicar aqui.
+  paid: { label: "Quitada", style: "border-line-strong text-content-primary" },
+  pending: { label: "A vencer", style: "border-line-hairline text-content-muted" },
+  partial: {
+    label: "Parcial",
+    style: "border-line-hairline bg-surface-panel opacity-hatch text-content-primary",
+  },
+  cancelled: { label: "Cancelada", style: "border-line-hairline line-through text-content-muted" },
+  written_off: { label: "Baixa por perda", style: "border-line-strong line-through text-content-primary" },
+  // `payments.status === "reversed"` — rótulo próprio, nunca reusar
+  // "Rejeitado" (spec §13.3: nomear pelo que a pessoa controla, com
+  // precisão — estorno não é a mesma coisa que rejeição).
+  reversed: { label: "Estornado", style: "border-line-strong line-through text-content-primary" },
 } as const;
 
 export function StatusChip({ status }: { status: keyof typeof STATUS }) {

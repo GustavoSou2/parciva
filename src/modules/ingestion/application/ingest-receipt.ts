@@ -17,8 +17,18 @@ import type { ExtractionTierContribution } from "../domain/pipeline";
 import { validateExtractionOutput } from "../domain/extraction-schema";
 import type { ExtractionOutput, RawReceipt } from "../domain/types";
 
-/** Abaixo desse limiar de confiança, o Tier 3 (VLM barato) é acionado — spec §7.1/§7.5. */
-const VLM_CONFIDENCE_THRESHOLD = 0.85;
+/**
+ * Abaixo desse limiar de confiança, o Tier 3 (VLM barato) é acionado —
+ * spec §7.1/§7.5. Exportado porque é o mesmo número que decide
+ * `receipts.status` ("extracted" vs "review") em quem persiste o
+ * resultado (hoje `receipt-worker.ts`) — um só lugar define o limiar.
+ */
+export const VLM_CONFIDENCE_THRESHOLD = 0.85;
+
+/** `receipts.status` para um resultado `Ok` — mesmo limiar usado para decidir VLM acima. */
+export function decideReceiptStatus(confidence: number): "extracted" | "review" {
+  return confidence >= VLM_CONFIDENCE_THRESHOLD ? "extracted" : "review";
+}
 
 export type IngestError =
   | "unsupported_mime"

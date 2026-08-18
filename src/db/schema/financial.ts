@@ -15,6 +15,7 @@ import {
   date,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   text,
@@ -24,7 +25,8 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-import { tenants } from "./tenancy";
+import { tenants, users } from "./tenancy";
+import { receipts } from "./ingestion";
 
 export const documentTypeEnum = pgEnum("document_type", ["cpf", "cnpj", "none"]);
 
@@ -102,6 +104,13 @@ export const chargeStatusEnum = pgEnum("charge_status", [
 export const ledgerDirectionEnum = pgEnum("ledger_direction", ["debit", "credit"]);
 
 export const ledgerActorTypeEnum = pgEnum("ledger_actor_type", ["system", "user", "api"]);
+
+// Marco 4 do roadmap — spec §5.3/§6.6.
+export const reconciliationDecisionEnum = pgEnum("reconciliation_decision", [
+  "auto_applied",
+  "needs_review",
+  "rejected",
+]);
 
 export const payers = pgTable(
   "payers",
@@ -188,9 +197,7 @@ export const payments = pgTable(
     tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
     payerId: uuid("payer_id").notNull().references(() => payers.id),
     origin: paymentOriginEnum("origin").notNull(),
-    // FK para receipts.id (módulo ingestion, §5.3) — schema ainda não
-    // existe; referência formal entra quando esse arquivo for criado.
-    receiptId: uuid("receipt_id"),
+    receiptId: uuid("receipt_id").references(() => receipts.id),
     chargeId: uuid("charge_id").references(() => charges.id),
     verificationLevel: verificationLevelEnum("verification_level").notNull(),
     amountCents: integer("amount_cents").notNull(),
@@ -311,6 +318,27 @@ export const ledgerEntries = pgTable("ledger_entries", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Log de auditoria da decisão automática vs. revisão (spec §5.3/§6.6) —
+ * Marco 4 do roadmap. Uma linha por tentativa de reconciliação de
+ * `receipt`, `auto_applied` ou não. `risk_score` da spec original fica
+ * de fora — o módulo de fraude (Fase 5) não existe ainda, não há dado
+ * real pra essa coluna (ver DECISIONS.md).
+ */
+export const reconciliationProposals = pgTable("reconciliation_proposals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  receiptId: uuid("receipt_id").notNull().references(() => receipts.id, { onDelete: "cascade" }),
+  paymentId: uuid("payment_id").references(() => payments.id),
+  proposedAllocations: jsonb("proposed_allocations").notNull().default([]),
+  confidence: numeric("confidence").notNull(), // mesmo padrão de receipt_extractions.overall_confidence
+  decision: reconciliationDecisionEnum("decision").notNull(),
+  reviewedBy: uuid("reviewed_by").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  reviewNote: text("review_note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const payersRelations = relations(payers, ({ many }) => ({
   contracts: many(contracts),
   payments: many(payments),
@@ -389,4 +417,10 @@ export const ledgerEntriesRelations = relations(ledgerEntries, ({ one, many }) =
     relationName: "ledgerEntryReversal",
   }),
   reversals: many(ledgerEntries, { relationName: "ledgerEntryReversal" }),
+}));
+
+export const reconciliationProposalsRelations = relations(reconciliationProposals, ({ one }) => ({
+  receipt: one(receipts, { fields: [reconciliationProposals.receiptId], references: [receipts.id] }),
+  payment: one(payments, { fields: [reconciliationProposals.paymentId], references: [payments.id] }),
+  reviewer: one(users, { fields: [reconciliationProposals.reviewedBy], references: [users.id] }),
 }));

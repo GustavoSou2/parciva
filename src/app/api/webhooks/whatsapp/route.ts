@@ -17,7 +17,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { TenantContext } from "@/db/client";
 import { isErr } from "@/shared/result";
 import type { RawReceipt } from "@/modules/ingestion";
-import { handleInbound, type HandleInboundDeps } from "@/modules/whatsapp";
+import {
+  claimInboundMessage,
+  handleInbound,
+  resolveTenantByPhoneNumberId,
+  type HandleInboundDeps,
+} from "@/modules/whatsapp";
 import { getReceiptQueue } from "@/workers/queues";
 import { REPLY_DUPLICATE } from "./replies";
 
@@ -31,12 +36,19 @@ function getAuthToken(): string {
   return token;
 }
 
-function checkDuplicate(messageSid: string): Promise<boolean> {
-  // TODO: consultar inbound_messages.provider_message_id (spec §5.4) —
-  // banco ainda não conectado nesta fase. Sem dedupe real, reenvio do
-  // Twilio para a mesma mensagem é processado de novo.
-  void messageSid;
-  return Promise.resolve(false);
+function checkDuplicate(
+  ctx: TenantContext,
+  channelId: string,
+): (inbound: Parameters<HandleInboundDeps["checkDuplicate"]>[0]) => Promise<boolean> {
+  return async (inbound) => {
+    const claimed = await claimInboundMessage(ctx, {
+      channelId,
+      messageSid: inbound.messageSid,
+      kind: inbound.kind,
+      ...(inbound.body !== undefined ? { body: inbound.body } : {}),
+    });
+    return !claimed;
+  };
 }
 
 // C-43: mídia baixada imediatamente — a URL do Twilio é temporária e expira.
@@ -75,6 +87,7 @@ async function enqueueReceipt(tenantId: string, raw: RawReceipt): Promise<void> 
     mimeType: raw.mimeType,
     source: raw.source,
     receivedAt: raw.receivedAt.toISOString(),
+    ...(raw.fromPhone ? { fromPhone: raw.fromPhone } : {}),
   });
   console.log("enqueueReceipt: job adicionado com sucesso");
 }
@@ -157,14 +170,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const url = resolveRequestUrl(request);
     const payload = buildPayload(rawParams);
 
-    // TODO: resolver tenant a partir de `payload.To` em
-    // `whatsapp_channels.phone_number_id` — banco ainda não conectado
-    // nesta fase (mesma limitação de `checkDuplicate` acima).
-    const ctx: TenantContext = { tenantId: "" };
+    // Resolve o tenant a partir de `payload.To` em
+    // `whatsapp_channels.phone_number_id`. Precisa acontecer antes de
+    // `handleInbound` porque `ctx`/`deps` (que carregam o tenantId) são
+    // montados aqui — a validação de assinatura continua sendo o
+    // primeiro passo REAL de `handleInbound` (spec §9.2); resolver o
+    // canal antes não pula essa checagem, só decide qual tenant validar
+    // contra. Canal desconhecido e assinatura inválida devolvem a mesma
+    // resposta 200 opaca, sem distinguir os dois casos para quem chamou.
+    const channel = await resolveTenantByPhoneNumberId(payload.To);
+    if (!channel) {
+      console.error("[whatsapp webhook] canal desconhecido para o número:", payload.To);
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    const ctx: TenantContext = { tenantId: channel.tenantId };
 
     const deps: HandleInboundDeps = {
       getAuthToken,
-      checkDuplicate,
+      checkDuplicate: checkDuplicate(ctx, channel.channelId),
       downloadMedia,
       enqueueReceipt: (raw) => enqueueReceipt(ctx.tenantId, raw),
       sendReply,

@@ -4,3 +4,6 @@ export type { HandleInboundDeps, HandleInboundError } from "./application/handle
 export type { ParsedInbound } from "./domain/types";
 export { transition } from "./domain/conversation";
 export type { ConversationState, ConversationEvent } from "./domain/conversation";
+export { resolveTenantByPhoneNumberId } from "./infra/channel-repository";
+export type { ResolvedChannel } from "./infra/channel-repository";
+export { claimInboundMessage } from "./infra/inbound-repository";

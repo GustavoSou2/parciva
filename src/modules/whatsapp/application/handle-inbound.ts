@@ -19,7 +19,7 @@ import { err, isErr, ok } from "@/shared/result";
 import type { RawReceipt } from "@/modules/ingestion";
 import { validateTwilioSignature } from "../domain/signature";
 import { parseInbound } from "../domain/parser";
-import type { TwilioInboundMessage } from "../domain/types";
+import type { ParsedInbound, TwilioInboundMessage } from "../domain/types";
 
 export type HandleInboundError =
   | "invalid_signature"
@@ -30,7 +30,11 @@ export type HandleInboundError =
 
 export interface HandleInboundDeps {
   getAuthToken(): string;
-  checkDuplicate(messageSid: string): Promise<boolean>;
+  // Recebe o `ParsedInbound` inteiro (não só messageSid) porque a
+  // implementação real precisa de kind/body para gravar a linha de
+  // dedupe em `inbound_messages` no mesmo INSERT atômico que reivindica
+  // o messageSid — ver `infra/inbound-repository.ts`.
+  checkDuplicate(inbound: ParsedInbound): Promise<boolean>;
   downloadMedia(url: string, authToken: string): Promise<Buffer>;
   enqueueReceipt(raw: RawReceipt): Promise<void>;
   sendReply(to: string, body: string): Promise<void>;
@@ -71,7 +75,7 @@ export async function handleInbound(
   if (isErr(parsed)) return err("parse_error");
   const inbound = parsed.value;
 
-  if (await deps.checkDuplicate(inbound.messageSid)) return err("duplicate");
+  if (await deps.checkDuplicate(inbound)) return err("duplicate");
 
   if (inbound.kind === "text") {
     await deps.sendReply(inbound.from, TEXT_GUIDANCE_REPLY);
@@ -97,6 +101,10 @@ export async function handleInbound(
     sizeBytes: buffer.length,
     source: "whatsapp",
     receivedAt: new Date(),
+    // Sem prefixo "whatsapp:" (parseInbound preserva o formato bruto do
+    // Twilio) — identificação de pagador por telefone (spec §6.3)
+    // compara contra `payers.phone_e164`, que nunca tem esse prefixo.
+    fromPhone: inbound.from.replace(/^whatsapp:/, ""),
   };
 
   try {
