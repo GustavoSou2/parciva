@@ -1,0 +1,1 @@
+ALTER TYPE "public"."reconciliation_decision" ADD VALUE 'reviewed_approved';

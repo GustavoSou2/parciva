@@ -89,3 +89,51 @@ export async function normalizeImage(buffer: Buffer): Promise<Buffer> {
 export function computeHash(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
+
+const PHASH_SIDE = 8;
+
+/**
+ * Distância de Hamming máxima (de 64 bits) para tratar duas imagens como
+ * "o mesmo comprovante reenviado" (Tier 0, spec §7.1/C-02) — valor
+ * conservador único, mesma disciplina de `VLM_CONFIDENCE_THRESHOLD`
+ * (constante nomeada, não mágica espalhada pelo código).
+ */
+export const PHASH_NEAR_DUPLICATE_MAX_DISTANCE = 8;
+
+/**
+ * Average hash (aHash) — Tier 0 "quase-duplicata" (spec §7.1/C-02):
+ * pega reenvio do MESMO comprovante recortado/recomprimido, que
+ * `content_hash` (byte-exato) não pega. Reduz para 8×8 em escala de
+ * cinza, compara cada pixel à média e produz 64 bits — sem dependência
+ * nova, só `sharp` (já usado por `normalizeImage`). Não é criptográfico
+ * nem robusto a rotação/espelhamento; robusto o bastante para
+ * recorte leve/recompressão JPEG, o caso real de reenvio via WhatsApp.
+ */
+export async function computePerceptualHash(buffer: Buffer): Promise<string> {
+  const { data } = await sharp(buffer)
+    .greyscale()
+    .resize(PHASH_SIDE, PHASH_SIDE, { fit: "fill" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const average = data.reduce((sum, value) => sum + value, 0) / data.length;
+
+  let bits = 0n;
+  for (const value of data) {
+    bits = (bits << 1n) | (value >= average ? 1n : 0n);
+  }
+  const hexLength = (PHASH_SIDE * PHASH_SIDE) / 4; // 64 bits → 16 chars hex
+  return bits.toString(16).padStart(hexLength, "0");
+}
+
+/** Distância de Hamming entre dois hashes perceptuais hex (64 bits) — 0 = idênticos. */
+export function hammingDistance(a: string, b: string): number {
+  const diff = BigInt(`0x${a}`) ^ BigInt(`0x${b}`);
+  let distance = 0;
+  let remaining = diff;
+  while (remaining > 0n) {
+    distance += Number(remaining & 1n);
+    remaining >>= 1n;
+  }
+  return distance;
+}

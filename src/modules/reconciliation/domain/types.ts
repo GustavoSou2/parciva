@@ -57,6 +57,22 @@ export interface RegisterManualPaymentInput {
   readonly actorUserId?: string;
 }
 
+export type ProposalDecision = "auto_applied" | "needs_review" | "rejected" | "reviewed_approved";
+
+/** `reconciliation_proposals` — para a fila de revisão (Marco 5). */
+export interface Proposal {
+  readonly id: string;
+  readonly receiptId: string;
+  readonly paymentId: string | null;
+  readonly proposedAllocations: readonly AllocationLine[];
+  readonly confidence: number;
+  readonly decision: ProposalDecision;
+  readonly reviewedBy: string | null;
+  readonly reviewedAt: Date | null;
+  readonly reviewNote: string | null;
+  readonly createdAt: Date;
+}
+
 /** `payments` — para exibição (histórico de pagamentos de um contrato/pagador). */
 export interface Payment {
   readonly id: string;

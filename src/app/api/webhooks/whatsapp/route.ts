@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import type { TenantContext } from "@/db/client";
 import { isErr } from "@/shared/result";
+import { logger } from "@/shared/logger";
 import type { RawReceipt } from "@/modules/ingestion";
 import {
   claimInboundMessage,
@@ -72,14 +73,7 @@ async function downloadMedia(url: string, authToken: string): Promise<Buffer> {
 
 async function enqueueReceipt(tenantId: string, raw: RawReceipt): Promise<void> {
   const receiptId = randomUUID();
-  console.log(
-    "enqueueReceipt: chamado, tenantId:",
-    tenantId,
-    "receiptId:",
-    receiptId,
-    "mimeType:",
-    raw.mimeType,
-  );
+  logger.debug("enqueueReceipt chamado", { tenantId, receiptId, mimeType: raw.mimeType });
   await getReceiptQueue().add("process-receipt", {
     tenantId,
     receiptId,
@@ -89,7 +83,7 @@ async function enqueueReceipt(tenantId: string, raw: RawReceipt): Promise<void> 
     receivedAt: raw.receivedAt.toISOString(),
     ...(raw.fromPhone ? { fromPhone: raw.fromPhone } : {}),
   });
-  console.log("enqueueReceipt: job adicionado com sucesso");
+  logger.debug("enqueueReceipt: job adicionado com sucesso", { receiptId });
 }
 
 async function sendReply(to: string, body: string): Promise<void> {
@@ -180,7 +174,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // resposta 200 opaca, sem distinguir os dois casos para quem chamou.
     const channel = await resolveTenantByPhoneNumberId(payload.To);
     if (!channel) {
-      console.error("[whatsapp webhook] canal desconhecido para o número:", payload.To);
+      logger.error("canal desconhecido para o número", { to: payload.To });
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
@@ -194,30 +188,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       sendReply,
     };
 
-    console.log("handleInbound: chamando");
+    logger.debug("handleInbound: chamando");
     const result = await handleInbound(ctx, payload, rawParams, signature, url, deps);
-    console.log("handleInbound resultado:", JSON.stringify(result));
+    logger.debug("handleInbound resultado", { result });
 
     if (isErr(result) && result.error === "duplicate" && payload.From) {
       try {
         await sendReply(payload.From, REPLY_DUPLICATE);
       } catch (error) {
-        console.error("[whatsapp webhook] falha ao enviar aviso de duplicidade", error);
-        console.error(
-          "[whatsapp webhook] stack:",
-          error instanceof Error ? error.stack : error,
-        );
+        logger.error("falha ao enviar aviso de duplicidade", { error });
       }
     }
 
     if (isErr(result)) {
-      console.error("[whatsapp webhook] handleInbound retornou erro", result.error);
+      logger.error("handleInbound retornou erro", { error: result.error });
     }
 
     return NextResponse.json({ received: true }, { status: 200 });
   } catch (error) {
-    console.error("[whatsapp webhook] erro inesperado", error);
-    console.error("[whatsapp webhook] stack:", error instanceof Error ? error.stack : error);
+    logger.error("erro inesperado no webhook do WhatsApp", { error });
     return NextResponse.json({ received: true }, { status: 200 });
   }
 }

@@ -8,7 +8,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createTenant, getPlanLimits, saveMembership, saveTenant, saveUser, sendWelcomeEmail, slugExists } from "@/modules/tenant";
 import { createSession } from "@/modules/identity";
 import { isErr } from "@/shared/result";
-import { SESSION_COOKIE_NAME } from "@/shared/session-cookie";
+import { setSessionCookies } from "@/app/_lib/session-cookies";
 
 export const runtime = "nodejs";
 
@@ -49,12 +49,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const session = await createSession(result.value.userId);
   const response = NextResponse.json({ tenantSlug: result.value.slug }, { status: 201 });
-  response.cookies.set(SESSION_COOKIE_NAME, session.rawToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: session.expiresAt,
-  });
+  setSessionCookies(response, { token: session.rawToken, expiresAt: session.expiresAt });
   return response;
 }

@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    name: pnpm check
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: parciva
+          POSTGRES_PASSWORD: parciva
+          POSTGRES_DB: parciva_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U parciva"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        # Sem --requirepass de propósito: services do GitHub Actions não
+        # aceitam argumento de comando custom, e CI é ambiente efêmero e
+        # isolado, sem exposição externa — não reflete a config de
+        # produção (infra/docker-compose.yml continua com senha em dev).
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      # Fonte única: o MESMO script que cria o role parciva_app em dev
+      # (infra/docker-compose.yml monta isto em docker-entrypoint-initdb.d)
+      # — replica a separação de role que a decisão [13] (DECISIONS.md)
+      # exige em "qualquer ambiente novo (staging, produção, CI)". Sem
+      # isso, RLS testaria contra o role superusuário e passaria mesmo
+      # com a policy quebrada — exatamente o bug que a decisão [13] pegou
+      # em dev antes de existir CI.
+      - name: Criar role parciva_app (infra/init-db.sql)
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+          PGPASSWORD=parciva psql -h localhost -U parciva -d parciva_dev -f infra/init-db.sql
+
+      # `.env`, não `env:` do job — os mesmos scripts (`pnpm db:migrate`,
+      # `pnpm check`) que rodam local via `--env-file=.env` rodam aqui sem
+      # nenhum caminho especial pra CI. Segredos são placeholders: nenhum
+      # teste faz chamada de rede real a Twilio/Anthropic.
+      - name: Escrever .env do CI
+        run: |
+          cat > .env <<'EOF'
+          DATABASE_URL=postgresql://parciva:parciva@localhost:5432/parciva_dev
+          APP_DATABASE_URL=postgresql://parciva_app:parciva_app@localhost:5432/parciva_dev
+          REDIS_URL=redis://localhost:6379
+          STORAGE_ROOT=/tmp/parciva-storage
+          STORAGE_MAX_DISK_USAGE_PCT=90
+          FILE_ENCRYPTION_KEY=ci-placeholder-file-encryption-key
+          ENCRYPTION_KEY=ci-placeholder-encryption-key
+          DOCUMENT_HASH_PEPPER=ci-placeholder-document-hash-pepper
+          SESSION_SECRET=ci-placeholder-session-secret
+          TWILIO_ACCOUNT_SID=
+          TWILIO_AUTH_TOKEN=
+          TWILIO_WHATSAPP_FROM=
+          ADMIN_SECRET=ci-placeholder-admin-secret
+          PSP_ENABLED=false
+          ANTHROPIC_API_KEY=
+          EOF
+
+      - name: Migrar banco
+        run: pnpm db:migrate
+
+      - name: pnpm check (lint + tipos + testes + tokens)
+        run: pnpm check
+
+      # CLI direta, não a gitleaks-action (que exige licença paga fora de
+      # repositório público) — mesmo script que já existia
+      # (`secrets:scan`, decisão [12]), só passa a rodar automaticamente.
+      - name: Instalar gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+
+      - name: Escanear segredos (gitleaks)
+        run: pnpm secrets:scan

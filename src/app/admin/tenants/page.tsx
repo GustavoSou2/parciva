@@ -1,24 +1,9 @@
 import { Card } from "@/ui/components/Card";
+import { listTenantSummaries } from "../_lib/queries";
 
-// TODO: buscar via getAdminDb() — lista abaixo é stub com 2 tenants de exemplo.
-const TENANTS = [
-  {
-    name: "Padaria São Jorge",
-    slug: "padaria-sao-jorge",
-    status: "active",
-    plan: "essential",
-    createdAt: "2026-02-01",
-  },
-  {
-    name: "Oficina do Zé",
-    slug: "oficina-do-ze",
-    status: "trial",
-    plan: "free",
-    createdAt: "2026-07-15",
-  },
-];
+export default async function AdminTenantsPage() {
+  const tenantsList = await listTenantSummaries();
 
-export default function AdminTenantsPage() {
   return (
     <main className="p-card-pad">
       <Card>
@@ -29,17 +14,19 @@ export default function AdminTenantsPage() {
               <th>Slug</th>
               <th>Status</th>
               <th>Plano</th>
+              <th>Comprovantes no mês</th>
               <th>Criado em</th>
             </tr>
           </thead>
           <tbody>
-            {TENANTS.map((tenant) => (
-              <tr key={tenant.slug} className="border-b border-line-hairline">
+            {tenantsList.map((tenant) => (
+              <tr key={tenant.id} className="border-b border-line-hairline">
                 <td>{tenant.name}</td>
                 <td>{tenant.slug}</td>
                 <td>{tenant.status}</td>
-                <td>{tenant.plan}</td>
-                <td>{tenant.createdAt}</td>
+                <td>{tenant.planCode}</td>
+                <td className="font-num tabular-nums">{tenant.receiptsThisMonth}</td>
+                <td>{tenant.createdAt.toISOString().slice(0, 10)}</td>
               </tr>
             ))}
           </tbody>

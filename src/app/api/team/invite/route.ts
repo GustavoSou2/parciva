@@ -20,10 +20,20 @@ import {
   membershipExists,
   requireSession,
   resolveTenantContext,
+  verifyCsrfToken,
   type MembershipRole,
 } from "@/modules/identity";
 import { isErr } from "@/shared/result";
+import { logger } from "@/shared/logger";
 import { SESSION_COOKIE_NAME } from "@/shared/session-cookie";
+
+const CSRF_HEADER_NAME = "x-csrf-token";
+
+function sessionSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) throw new Error("SESSION_SECRET não configurado.");
+  return secret;
+}
 
 export const runtime = "nodejs";
 
@@ -40,6 +50,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   });
   if (isErr(sessionResult)) {
     return NextResponse.json({ error: sessionResult.error }, { status: 401 });
+  }
+
+  // `/api/team/invite` é rota crua (não Server Action) — Next.js só
+  // protege Server Actions contra CSRF checando `Origin` automaticamente
+  // (decisão [16]). `SameSite=Lax` no cookie de sessão já cobre a maior
+  // parte do risco, mas isto fecha a defesa em profundidade que ficou
+  // pendente desde o Marco 2 (achado no Marco 3, nunca ligado).
+  const csrfHeader = request.headers.get(CSRF_HEADER_NAME);
+  if (!csrfHeader || !verifyCsrfToken(csrfHeader, sessionResult.value.sessionTokenHash, sessionSecret())) {
+    return NextResponse.json({ error: "invalid_csrf_token" }, { status: 403 });
   }
 
   let body: InviteBody;
@@ -77,7 +97,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Sem provedor de e-mail configurado — loga o link (dev). Ver
         // identity/application/invite-user.ts (best-effort, mesma
         // situação de sendWelcomeEmail em tenant/create-tenant.ts).
-        console.log(`[convite] link para ${email}: /invite/${rawToken}`);
+        // O token cru É a informação (não um vazamento a redigir): é o
+        // único jeito de testar o fluxo de convite manualmente hoje.
+        logger.info("link de convite (sem provedor de e-mail real)", { email, link: `/invite/${rawToken}` });
         return Promise.resolve();
       },
     },

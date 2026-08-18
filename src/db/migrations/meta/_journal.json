@@ -64,6 +64,27 @@
       "when": 1787047262011,
       "tag": "0008_reconciliation_proposals_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787061760937,
+      "tag": "0009_eminent_old_lace",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787068610623,
+      "tag": "0010_membership_self_lookup_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787069086468,
+      "tag": "0011_harden_membership_rls_null_guc",
+      "breakpoints": true
     }
   ]
 }

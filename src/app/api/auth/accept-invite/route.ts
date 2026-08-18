@@ -9,7 +9,7 @@ import {
 } from "@/modules/identity";
 import { getTenantSlugById } from "@/modules/tenant";
 import { isErr } from "@/shared/result";
-import { SESSION_COOKIE_NAME } from "@/shared/session-cookie";
+import { setSessionCookies } from "@/app/_lib/session-cookies";
 
 export const runtime = "nodejs";
 
@@ -47,12 +47,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const tenantSlug = await getTenantSlugById(result.value.tenantId);
   const response = NextResponse.json({ ok: true, tenantSlug }, { status: 200 });
-  response.cookies.set(SESSION_COOKIE_NAME, result.value.sessionToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: result.value.expiresAt,
-  });
+  setSessionCookies(response, { token: result.value.sessionToken, expiresAt: result.value.expiresAt });
   return response;
 }

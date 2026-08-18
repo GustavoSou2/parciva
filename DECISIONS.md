@@ -735,3 +735,409 @@ hoje (determinístico, OCR) preenche essa chave por campo, então a
 condição relacionada nunca dispara na prática até um tier futuro (VLM)
 começar a populá-la — não é uma lacuna nova, é a mesma ausência que já
 existia antes deste marco, agora só formalmente conectada à decisão.
+
+---
+
+## [18] Marco 5 sem VLM — só OCR, por decisão do usuário
+
+**Data:** 18/08/2026 (Marco 5 do roadmap — resto da Fase 2)
+
+**Contexto:** O plano original do Marco 5 (PROGRESS.md) incluía Tier 3
+(segundo provedor de VLM plugável, spec §7.3) e registro de custo por
+extração. Antes de implementar, perguntei ao usuário qual seria o
+segundo provedor — a spec exige opt-out de treinamento e retenção
+zero/curta, não é decisão só de custo/qualidade. Resposta: **por
+enquanto, só OCR — sem gasto com LLM.**
+
+**Decisão:** O Marco 5 foi replanejado para excluir tudo que dependia
+de VLM: segundo provedor, interface `ExtractionProvider` plugável
+(anti-lock-in, spec §7.3), ligar Tier 3 no worker, e registro de
+`cost_micros` (continua `NULL` — sem VLM rodando não há custo de token
+a registrar, mesmo estado de antes). `infra/anthropic-vlm.ts` continua
+existindo no código, sem uso — mesma situação de antes deste marco, só
+que agora com a ausência de um segundo provedor formalmente registrada
+como decisão de escopo, não lacuna esquecida. O que o Marco 5 entregou
+de fato: Tier 1 real (`domain/pdf-text.ts`, via `pdfjs-dist`,
+substituindo `buffer.toString("utf-8")`), Tier 0 quase-duplicata
+(`domain/normalizer.ts`, aHash + Hamming distance, sem dependência
+nova — só `sharp`, já instalado) e a tela de fila de revisão
+(`/t/<slug>/review`).
+
+**Alternativas descartadas:** Manter Tier 3/VLM no escopo do marco
+mesmo sem provedor escolhido (rejeitado — travaria o marco inteiro por
+uma decisão que precisa ser tomada com calma, não às pressas só para
+não atrasar o resto do trabalho que não depende disso).
+
+**Consequências:** Tier 3/4 (VLM), segundo provedor e registro de
+custo ficam como pendência explícita para quando o usuário decidir
+gastar com LLM — não fazem mais parte do roadmap ativo até lá (ver
+PROGRESS.md, "Pendências conhecidas"). Enquanto isso, todo comprovante
+que Tier 1/Tier 2 não resolverem cai direto em revisão humana — a fila
+de revisão deste marco é o que torna isso operável, não só uma
+peça isolada.
+
+---
+
+## [19] Fila de revisão: `reviewed_approved` distinto de `auto_applied`
+
+**Data:** 18/08/2026 (Marco 5 do roadmap)
+
+**Contexto:** `reconciliation_proposals.decision` (decisão [17]/Marco 4)
+tinha só `auto_applied`/`needs_review`/`rejected` — nenhum valor
+cobria "um humano aprovou manualmente na fila de revisão". Gravar
+aprovação humana como `auto_applied` mentiria na trilha de auditoria
+(spec §5.3: "log de toda decisão") sobre quem decidiu.
+
+**Decisão:** Novo valor de enum `reviewed_approved`
+(`ALTER TYPE ... ADD VALUE`, migração aditiva pura,
+`0009_eminent_old_lace.sql`), usado só pelo caminho novo
+`approveReceiptProposal` (`reconciliation/infra/payment-repository.ts`).
+Esse caminho **nunca reaproveita** `proposal.proposedAllocations` (a
+alocação calculada quando a proposta foi criada, no Marco 4) — recalcula
+tudo dentro de um novo lock (`SELECT ... FOR UPDATE` na proposal +
+nas installments, mesma transação), porque o estado do contrato pode
+ter mudado entre a criação da proposta e a revisão humana. A proposal
+também é travada antes de aprovar — segunda tentativa de aprovar a
+mesma proposal (duplo clique, duas abas) falha com `already_reviewed`,
+nunca aplica pagamento duplicado. `StatusChip` ganhou a chave
+`reviewed_approved` ("Aprovado na revisão") — nunca reusa o rótulo
+"Confirmado" (decisão [5]: reservado a `psp_confirmed`, confirmação
+real do PSP; aprovação humana de comprovante continua sendo
+comprovante).
+
+**Alternativas descartadas:** Gravar aprovação humana como
+`auto_applied` (rejeitado — mentira na auditoria); reaproveitar
+`proposedAllocations` armazenado em vez de recalcular (rejeitado —
+pode estar desatualizado, mesmo raciocínio de "sem janela de corrida"
+já documentado para o caminho automático em `executeReceiptPaymentTx`).
+
+**Consequências:** Qualquer relatório futuro de "quanto do volume foi
+decidido por humano vs. pelo motor" pode usar `decision` diretamente,
+sem heurística adicional. Serve o arquivo de comprovante em
+`/t/<slug>/receipts/<id>/file` (novo, `readReceiptFile` em
+`shared/storage.ts`) lendo o buffer direto do disco — em produção isso
+deveria virar `X-Accel-Redirect` pro Nginx (decisão [7]), dívida
+registrada, não implementada aqui (sem Nginx em dev).
+
+---
+
+## [20] `getRootDb()` não bypassa RLS — só `getAdminDb()` faz isso
+
+**Data:** 18/08/2026 (Marco 6 do roadmap — isolamento cross-tenant nas 13
+tabelas de domínio originais)
+
+**Contexto:** Ao escrever `tests/security/tenant-isolation-tenancy.test.ts`
+(a primeira vez que um teste tentava inserir, via `getRootDb()`, uma linha
+"global" de `audit_logs` com `tenant_id: NULL` — o caso do superadmin,
+spec §12), a tentativa falhou com "new row violates row-level security
+policy" (ou, dependendo do estado da conexão, "invalid input syntax for
+type uuid: ''" — sintoma diferente, mesma causa raiz). `getRootDb()`
+(`src/db/client.ts`) conecta via `APP_DATABASE_URL` — o role `parciva_app`
+(NOSUPERUSER NOBYPASSRLS, decisão [13]) — não o superusuário. O próprio
+comentário do arquivo já avisava ("Nunca use para tabela com tenant_id"),
+mas nenhum teste tinha exercitado uma tabela com RLS através dele antes
+desta tarefa para confirmar o comportamento na prática.
+
+**Decisão:** Nenhuma mudança de código — `getRootDb()` está correto como
+está (root tables como `tenants`/`users`/`plans` nunca tiveram RLS, então
+é seguro para elas). O teste foi corrigido para usar `getAdminDb()`
+(`src/db/admin-client.ts`, role com `BYPASSRLS` de verdade) para simular
+o caminho real do superadmin. Registrado aqui porque é exatamente o tipo
+de confusão de nome que a decisão [13] já alertava ser fácil de cometer —
+"root" e "bypass RLS" soam como sinônimos, mas são dois roles diferentes
+com propósitos diferentes.
+
+**Alternativas descartadas:** Fazer `getRootDb()` bypassar RLS também
+(rejeitado — misturaria o propósito das duas funções e aumentaria o raio
+de quem pode contornar a RLS sem querer; `getAdminDb()` já existe
+exatamente para isso, com o comentário de restrição de import só para
+`src/app/(admin)/**`).
+
+**Consequências:** Qualquer teste futuro que precise simular o
+superadmin (bypass de RLS de verdade) deve usar `getAdminDb()`, nunca
+`getRootDb()` — `getRootDb()` serve só para as 4 tabelas raiz sem RLS
+nenhuma. Vale considerar, fora do escopo desta tarefa, nomear as duas
+funções de forma menos ambígua (`getRootDb` → algo como `getUnscopedDb`)
+quando a tarefa de lint (`no-restricted-imports`, já citada em
+`admin-client.ts`) for feita.
+
+---
+
+## [21] Marco 6 — isolamento nas 13 tabelas, CI, logger estruturado
+
+**Data:** 18/08/2026
+
+**Contexto:** Três débitos sem fase própria, listados em PROGRESS.md:
+(1) `tests/security/tenant-isolation.test.ts` só cobria `receipts`/
+`inbound_messages`; as 13 tabelas de domínio originais tinham RLS desde
+`0001_rls.sql` mas nunca foram exercitadas contra Postgres vivo — risco
+real, não só cobertura incompleta, dado o que a decisão [13] revelou.
+(2) Não existia CI. (3) Não existia logger estruturado.
+
+**Decisão:**
+- **Isolamento:** 3 arquivos novos em `tests/security/`, agrupados pela
+  cadeia de dependência real (reconciliation: payers→contracts→
+  installments→payments→payment_allocations→credit_balances→
+  ledger_entries, tudo via `executeManualPayment` real, nunca insert cru
+  pra essas tabelas; charges: psp_connections/charges/charge_installments,
+  Modelo B sem repositório ainda, insert cru justificado; tenancy:
+  memberships/subscriptions/usage_counters/audit_logs). `audit_logs` —
+  única das 13 com `tenant_id` nullable — ganhou teste extra confirmando
+  que uma linha global (tenant_id NULL) não vaza pra nenhuma sessão de
+  tenant, só para `getAdminDb()` (ver decisão [20]). `pnpm test:tenant`
+  virou `vitest run tests/security` (glob), não mais um arquivo só.
+- **CI:** `.github/workflows/ci.yml`, um job (`pnpm/action-setup` +
+  `actions/setup-node`), serviços Postgres/Redis efêmeros, roda
+  `infra/init-db.sql` (o MESMO script de dev, não uma cópia) pra criar
+  `parciva_app` antes de migrar — fecha a lacuna que a decisão [13] já
+  registrava sobre "qualquer ambiente novo precisa replicar essa
+  separação de role". Env do job vem de um `.env` escrito num step
+  (não `env:` do job) — os mesmos scripts (`pnpm db:migrate`, `pnpm
+  check`) rodam sem nenhum caminho especial pra CI. `pnpm check` +
+  `pnpm secrets:scan` (gitleaks, CLI direta via binário baixado — não a
+  `gitleaks-action`, que exige licença paga fora de repositório
+  público). Validado localmente ponta a ponta contra Postgres/Redis
+  efêmeros isolados (containers descartáveis, portas diferentes das de
+  dev) antes de existir a run real do Actions.
+- **`.gitleaks.toml` novo** — o scan roda em modo filesystem (`--no-git`),
+  que não respeita `.gitignore` sozinho: sem allowlist, varria
+  `node_modules`/`.next` inteiros (lento, falso positivo em dependência
+  de terceiro) e sempre "vazava" o `.env` local de dev (que é gitignored
+  de propósito, invariante 7 — não é um vazamento real). Rodado contra o
+  repositório inteiro depois de configurado: `no leaks found`.
+- **Logger estruturado (`src/shared/logger.ts`):** hand-rolled (mesmo
+  espírito de `Result`/`Money` — sem lib nova pra um problema pequeno),
+  uma linha JSON por chamada, `LOG_LEVEL` (env) filtra o nível mínimo.
+  Migração com escopo explícito: processos de produção contínua
+  (workers, rotas de webhook/API, código de ingestão que eles chamam) —
+  nunca `db/seed.ts`/`db/migrate.ts` (scripts de CLI manual, onde
+  `console.log` cru é mais legível pra um humano). O link de convite/
+  boas-vindas (dev, sem provedor de e-mail real — decisão [15]) continua
+  logando o token cru de propósito — não é vazamento a redigir, é a
+  única forma de testar o fluxo hoje.
+- **Achado lateral, corrigido junto:** dois lockfiles no repositório
+  (`package-lock.json` do npm e um `pnpm-lock.yaml` gerado localmente no
+  Marco 5, nunca commitado) — resolvido a favor de `pnpm-lock.yaml`
+  único (CLAUDE.md já documenta só comandos `pnpm`), com
+  `packageManager: "pnpm@9.15.9"` fixado no `package.json`.
+  `db:migrate`/`db:seed` também ganharam `--env-file=.env` (só `worker`
+  já tinha isso) — sem isso, `pnpm db:migrate` local não lia o `.env`
+  sozinho (bug real, pego de novo durante o Marco 5).
+
+**Alternativas descartadas:** `gitleaks-action` em vez de instalar a CLI
+direto (rejeitado — exige licença paga em repositório privado, risco de
+quebrar o CI sem controle nenhum deste lado); manter `package-lock.json`
+(rejeitado pelo usuário — contradiria os comandos `pnpm` já documentados
+no CLAUDE.md).
+
+**Consequências:** Todo push/PR agora passa por `pnpm check` +
+`secrets:scan` de verdade, não só disciplina manual. Qualquer ambiente
+novo que precisar do banco (staging, produção) tem em `infra/init-db.sql`
++ o passo do `ci.yml` um exemplo de referência de como provisionar os
+dois roles corretamente. Registro estruturado ainda não cobre
+`db/seed.ts`/`db/migrate.ts` nem todo `console.*` do projeto — cobertura
+parcial, deliberada, não uma migração completa.
+
+---
+
+## [22] Três dívidas soltas: CSRF no convite, `db:reset`, cookie duplo
+
+**Data:** 18/08/2026 (pós-Marco 6 — itens pequenos já identificados em
+PROGRESS.md, sem marco próprio)
+
+**Contexto:** Três pendências pequenas, cada uma já registrada em
+PROGRESS.md desde marcos anteriores: (1) `/api/team/invite` nunca
+checava o token CSRF que `deriveCsrfToken`/`verifyCsrfToken` (decisão
+[15]) sempre existiram pra proteger — achado no Marco 3, nunca ligado no
+Marco 2; (2) `db:reset` chamava `src/db/reset.ts`, um arquivo que nunca
+existiu no repositório; (3) nenhuma delas tinha, na prática, um jeito do
+cliente sequer OBTER o token CSRF — as duas funções eram exportadas e
+nunca chamadas em lugar nenhum do código.
+
+**Decisão:**
+- **CSRF de verdade, padrão "cookie duplo".** Novo cookie
+  `parciva_csrf` (`shared/session-cookie.ts`), **não** `httpOnly` — de
+  propósito, pra JS de cliente ler e ecoar num header `X-Csrf-Token`.
+  Gravado sempre junto do cookie de sessão, nas 3 rotas que criam
+  sessão (login, signup, accept-invite) via um helper novo,
+  `src/app/_lib/session-cookies.ts` (`setSessionCookies`/
+  `clearSessionCookies`) — evita repetir as mesmas opções de cookie em
+  cada rota. Fica fora de `src/shared/` de propósito: usa
+  `deriveCsrfToken`/`node:crypto`, que não roda no runtime Edge do
+  middleware (mesmo motivo de `identity/domain/session.ts` já não
+  poder ser Edge-safe sozinho). `/api/team/invite` agora recusa (403,
+  `invalid_csrf_token`) qualquer requisição sem o header batendo com o
+  cookie — verificado ao vivo contra `next dev` real: sem header → 403;
+  header errado → 403; header certo (lido do cookie que o signup
+  devolveu) → 201. Só esta rota foi ligada porque é a única API crua
+  hoje que muta estado fora de uma Server Action (que o Next.js já
+  protege sozinho, decisão [16]) — qualquer rota nova nesse mesmo
+  formato deve seguir o mesmo padrão.
+- **`db:reset` implementado** (`src/db/reset.ts`) — `TRUNCATE ...
+  CASCADE` em todas as tabelas de `public`, não `DROP SCHEMA`: preserva
+  a estrutura (migrações continuam "aplicadas", `pnpm db:migrate`
+  depois é no-op) e os `GRANT`/`ALTER DEFAULT PRIVILEGES` de
+  `parciva_app` (`infra/init-db.sql`) — um `DROP SCHEMA` recriaria o
+  schema com OID novo e perderia esses grants, reintroduzindo o
+  problema da decisão [13] por outro caminho. `TRUNCATE` não dispara
+  trigger de linha, só de statement — a proteção append-only do ledger
+  não impede isto, de propósito (reset de dev existe pra destruir
+  tudo). Guarda de segurança: recusa rodar se `DATABASE_URL` não
+  apontar pra `localhost`/`127.0.0.1`. Testado de verdade contra o
+  Postgres de dev: 24 tabelas limpas, `pnpm db:migrate`+`pnpm db:seed`
+  recriaram o estado seedado, roles `parciva`/`parciva_app` intactos,
+  `pnpm test:tenant` continuou passando depois.
+
+**Alternativas descartadas:** `DROP SCHEMA public CASCADE` (rejeitado —
+ver acima, perde os grants de `parciva_app`); guardar o token CSRF em
+tabela/coluna própria (rejeitado desde a decisão [15] — o cookie duplo
+não precisa de estado novo, é sempre recalculável a partir do que já
+está persistido).
+
+**Consequências:** Qualquer rota de API crua nova que mude estado
+(fora de Server Action) deve ler `parciva_csrf` do lado do cliente e
+mandar `X-Csrf-Token` — não há mecanismo automático tipo o do Next.js
+pra Server Actions aqui. `db:reset` agora é seguro de usar em loop de
+desenvolvimento (testar seed do zero sem derrubar o container).
+
+---
+
+## [23] Login sabe pra qual tenant ir — segunda policy de RLS em `memberships`
+
+**Data:** 18/08/2026
+
+**Contexto:** Login nunca soube pra qual tenant redirecionar quando o
+usuário pertence a mais de um (ou só um, sem informar o slug) —
+mitigado até aqui com um campo manual "empresa" no formulário. A causa
+raiz: `memberships` tem `FORCE ROW LEVEL SECURITY` filtrando por
+`tenant_id`, e não dá pra listar "os tenants deste usuário" sem já
+saber um `tenant_id` pra setar `app.tenant_id` primeiro — o mesmo
+problema de bootstrap que já tira `whatsapp_channels`/`sessions`/
+`invite_tokens` da RLS, só que `memberships` não pode virar tabela raiz
+(é dado sensível por tenant de verdade).
+
+**Decisão:** Nova policy permissiva, só de SELECT, em `memberships`
+(`0010_membership_self_lookup_rls.sql`):
+```sql
+CREATE POLICY self_membership_lookup ON memberships
+  FOR SELECT
+  USING (user_id = current_setting('app.user_id', true)::uuid);
+```
+Postgres faz OR entre policies permissivas do mesmo comando — uma
+sessão com `app.user_id` setado (nova função `getUserDb(userId, run)`
+em `db/client.ts`, paralela a `getDb(ctx)`) enxerga as PRÓPRIAS linhas
+de `memberships` em qualquer tenant, nunca a de outro usuário, nunca
+nenhuma outra tabela. `FOR SELECT` é obrigatório: sem ele, a mesma
+condição valeria pra INSERT também, e um usuário conseguiria criar
+membership pra si mesmo em qualquer tenant só sabendo o próprio
+`user_id` — testado explicitamente que isso continua bloqueado.
+`listMembershipsForUser(userId)` (`identity/infra/membership-
+repository.ts`) é o ponto de entrada público; `/api/auth/login` chama
+isso após autenticar e devolve a lista pro cliente — 0 tenants mostra
+erro, 1 redireciona direto, 2+ mostra escolha inline na própria página
+de login (sem rota nova). Verificado ao vivo contra `next dev`:
+usuário com 2 memberships em tenants diferentes recebe os dois no
+login; usuário com 1 recebe só o dele.
+
+**Achado durante a implementação — GUC customizada "reseta" pra string
+vazia, não NULL.** Testando a policy nova, `getUserDb()` quebrou com
+`invalid input syntax for type uuid: ""` — `current_setting
+('app.tenant_id', true)` devolvia `''`, não `NULL`, dentro de uma
+transação que nunca setou essa GUC. Causa: numa conexão pooled
+(`postgres-js`/`baseDb`) já usada antes por `getDb()` (que faz `SET
+LOCAL app.tenant_id = ...`), o "reset" ao fim da transação volta pro
+valor placeholder da GUC customizada (`''`), não pro estado "nunca
+setado" — e as duas policies de `memberships` são avaliadas juntas
+(OR), então isso quebrava tanto `getUserDb()` (sem `app.tenant_id`)
+quanto um `getDb()` posterior na mesma conexão (sem `app.user_id`).
+Corrigido em `0011_harden_membership_rls_null_guc.sql`, envolvendo os
+dois `current_setting(...)` das policies de `memberships` em
+`NULLIF(..., '')` antes do cast — string vazia vira `NULL`,
+`tenant_id = NULL`/`user_id = NULL` é sempre falso (nunca concede
+acesso por engano).
+
+**Alternativas descartadas:** `getAdminDb()` (bypass real de RLS,
+rejeitado — exclusivo do painel de superadmin, escopo errado pra um
+fluxo de login normal); tabela raiz duplicada tipo `user_tenant_index`
+sem RLS, mantida em sincronia manualmente (rejeitado — cria um segundo
+lugar de verdade que pode divergir de `memberships`, o tipo de
+duplicação que o projeto evita, ex. `installments.paid_cents`
+agregado, decisão [14]).
+
+**Consequências:** Qualquer código futuro que precise fazer uma
+consulta "por usuário, atravessando tenant" em `memberships` deve usar
+`getUserDb`/`listMembershipsForUser`, nunca `getRootDb()` (RLS ainda
+ativa, devolveria vazio) nem `getAdminDb()` (blast radius errado). O
+achado da GUC "reseta pra vazio, não NULL" é uma classe de bug que só
+se manifesta quando uma tabela tem MAIS de uma policy dependendo de
+GUCs customizadas diferentes, ou quando uma nova função de acesso ao
+banco não seta todas as GUCs que outras funções já esperam — vale
+lembrar disso se um dia existir uma terceira forma de acesso
+escopado além de `getDb`/`getRootDb`/`getUserDb`/`getAdminDb`.
+
+---
+
+## [24] Painel de admin: rota corrigida, dado real — resto fica pendente
+
+**Data:** 18/08/2026
+
+**Contexto:** Investigando "como acessar o painel de admin", confirmei
+ao vivo (`curl` contra `next dev`, com e sem `x-admin-secret`) dois
+problemas reais: `src/app/(admin)/page.tsx` colidia com
+`src/app/page.tsx` em `/` (o dashboard nunca era servido) e as duas
+páginas existentes mostravam dado hardcoded, nunca consultavam o
+banco — apesar de `getAdminDb()` (`db/admin-client.ts`, role
+`BYPASSRLS`) já existir pronto pra isso desde antes.
+
+A spec (§12) pede um painel bem maior: app separado em subdomínio
+próprio, autenticação independente com MFA obrigatório, quebra-vidro
+completo (justificativa + janela de acesso + notificação ao Owner),
+impersonação, feature flags, fila de DLQ, gestão de planos sem
+deploy. Perguntado, o usuário confirmou: **só consertar o que está
+quebrado agora** — mesmo tratamento que MFA do app principal (decisão
+[15]) e VLM (decisão [18]) já receberam.
+
+**Decisão:**
+- `src/app/(admin)/` → `src/app/admin/` — remove o grupo de rota
+  (parênteses), que era exatamente a causa da colisão em `/`. Não é o
+  roteamento por subdomínio que a spec pede pra produção — é o
+  desbloqueio mínimo pra a página existir; registrado como pendência,
+  não confundido com a solução final.
+- Novo `src/app/admin/_lib/queries.ts` — `getGlobalMetrics()`/
+  `listTenantSummaries()`, ambos via `getAdminDb()`. Fica fora de
+  `src/modules/admin/` de propósito: o comentário de `admin-client.ts`
+  proíbe explicitamente qualquer `src/modules/**` de importar o
+  cliente com bypass de RLS — só `src/app/admin/**` pode. Mesmo
+  padrão de `src/app/_lib/require-tenant-session.ts` (glue
+  Next.js-específico fora de `src/modules/`).
+- `receipt_extractions.cost_micros` → centavos: `cents = micros /
+  10_000` (1 unidade monetária = 1_000_000 micros = 100 centavos).
+  Hoje sempre mostra R$ 0,00 — sem VLM rodando (decisão [18]), não há
+  custo real a somar; não é bug, é o estado esperado até o dia que o
+  Marco de VLM for retomado.
+- `src/modules/admin/index.ts` ganhou export de verdade
+  (`TenantSummary`/`GlobalMetrics`/`AdminAction`) — estava vazio, só
+  um comentário; sem isso, `_lib/queries.ts` não teria como importar
+  os tipos sem violar a fronteira de módulo (nunca `domain/**` direto
+  de fora).
+
+**Fora de escopo, deliberadamente (ver módulo `admin/README.md` para a
+lista completa):** subdomínio real; MFA/login próprio do admin (auth
+continua `x-admin-secret`, já documentado como placeholder desde
+antes); quebra-vidro completo; registro em `audit_logs` a cada acesso
+(TODO já existia em `admin-client.ts`, continua TODO); impersonação;
+feature flags; DLQ; ações (mudar plano, suspender, conceder crédito);
+busca por tenant/contrato/comprovante.
+
+**Alternativas descartadas:** implementar quebra-vidro básico (só
+registro em `audit_logs`, sem justificativa/janela) — oferecido como
+opção intermediária, o usuário preferiu o escopo mínimo puro.
+
+**Consequências:** `/admin` e `/admin/tenants` mostram dado real,
+verificado ao vivo contra o Postgres de dev (contagem bate com
+`SELECT count(*) FROM tenants WHERE status = 'active'` etc. rodado
+direto no banco). O painel continua inadequado pra produção com
+cliente real (sem MFA, sem subdomínio, sem quebra-vidro) — isso
+precisa ser resolvido antes de operar mais de um tenant de fato, mas
+essa decisão já estava registrada antes desta tarefa (spec §12) e
+continua sendo dívida conhecida, não nova.

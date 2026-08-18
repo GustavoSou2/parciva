@@ -81,3 +81,28 @@ export async function getDb<T>(
 export function getRootDb(): typeof baseDb {
   return baseDb;
 }
+
+/**
+ * Acesso escopado por USUÁRIO, não por tenant — existe só pra resolver
+ * "a quais tenants este usuário pertence" logo após o login, antes de
+ * saber qual tenant escolher (mesmo problema de bootstrap de
+ * `getRootDb()`, versão "por usuário"). Nunca bypassa RLS: `memberships`
+ * ganhou uma segunda policy, só de SELECT, liberando exatamente as
+ * linhas do próprio `user_id` (`0010_membership_self_lookup_rls.sql`) —
+ * isso não abre acesso a nenhuma outra tabela nem a membership de
+ * outro usuário. Só use para consultar `memberships` por `userId`;
+ * qualquer outra tabela com `tenant_id` continua exigindo `getDb(ctx)`.
+ */
+export async function getUserDb<T>(
+  userId: string,
+  run: (db: TenantDb) => Promise<T>,
+): Promise<T> {
+  if (!userId) {
+    throw new Error("getUserDb() chamado sem userId.");
+  }
+
+  return baseDb.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.user_id', ${userId}, true)`);
+    return run(tx);
+  });
+}

@@ -57,7 +57,7 @@ import type {
   PaymentMethod,
   RegisterManualPaymentInput,
 } from "../domain/types";
-import { createProposalTx } from "./proposal-repository";
+import { createProposalTx, lockProposalByIdTx, markProposalReviewedTx } from "./proposal-repository";
 
 function toPayment(row: typeof payments.$inferSelect): Payment {
   return {
@@ -365,6 +365,99 @@ async function executeReceiptPaymentTx(
       paymentId ? { decision: "auto_applied" as const, paymentId } : { decision: "needs_review" as const },
     );
   });
+}
+
+export interface ApproveReceiptProposalInput {
+  readonly proposalId: string;
+  readonly receiptId: string;
+  readonly payerId: string;
+  readonly contractId: string;
+  readonly amountCents: Money;
+  readonly paidAt: Date;
+  readonly method: PaymentMethod;
+  readonly transactionRef?: string;
+  readonly actorUserId: string;
+}
+
+export type ApproveReceiptProposalError =
+  | "proposal_not_found"
+  | "already_reviewed"
+  | "contract_not_found"
+  | "duplicate_transaction";
+
+/**
+ * Aprovar na fila de revisão (Marco 5, spec §6.6 "revisão humana") —
+ * sempre recalcula a alocação NA HORA, dentro do lock, nunca reaproveita
+ * `proposal.proposedAllocations` (gravado quando a proposta foi criada —
+ * pode estar desatualizado se outro pagamento tocou o contrato desde
+ * então). Mesmo cuidado de "sem janela de corrida" de
+ * `executeReceiptPaymentTx`, mesma trava (`SELECT ... FOR UPDATE`) na
+ * proposal E nas installments, ambas na mesma transação.
+ *
+ * `origin: "receipt"` / `verificationLevel: "document"` — nunca
+ * "confirmado" (decisão [5]): aprovação humana de um comprovante não é
+ * confirmação do PSP.
+ */
+export async function approveReceiptProposal(
+  ctx: TenantContext,
+  input: ApproveReceiptProposalInput,
+): Promise<Result<{ paymentId: string }, ApproveReceiptProposalError>> {
+  const contract = await getContractById(ctx, input.contractId);
+  if (!contract) return err("contract_not_found");
+
+  try {
+    return await getDb(ctx, async (db) => {
+      const proposal = await lockProposalByIdTx(db, ctx.tenantId, input.proposalId);
+      if (!proposal) return err("proposal_not_found");
+      if (proposal.decision !== "needs_review") return err("already_reviewed");
+
+      const locked = await lockInstallmentsByContractTx(db, ctx.tenantId, input.contractId);
+      const allocatable: AllocatableInstallment[] = locked.map((i) => ({
+        id: i.id,
+        dueDate: i.dueDate,
+        amountCents: i.amountCents,
+        fineCents: i.fineCents,
+        interestCents: i.interestCents,
+        paidCents: i.paidCents,
+        status: i.status,
+      }));
+
+      const referenceDate = input.paidAt.toISOString().slice(0, 10);
+      const allocation = allocatePayment(allocatable, input.amountCents, {
+        toleranceCents: contract.toleranceCents,
+        earlyPaymentPolicy: contract.earlyPaymentPolicy,
+        referenceDate,
+      });
+
+      const transactionRefHash = input.transactionRef ? hashTransactionRef(input.transactionRef) : null;
+
+      const result = await applyAllocationTx(db, ctx, {
+        payerId: input.payerId,
+        contractId: input.contractId,
+        amountCents: input.amountCents,
+        paidAt: input.paidAt,
+        method: input.method,
+        transactionRef: input.transactionRef ?? null,
+        transactionRefHash,
+        actorUserId: input.actorUserId,
+        origin: "receipt",
+        verificationLevel: "document",
+        receiptId: input.receiptId,
+        allocation,
+      });
+
+      await markProposalReviewedTx(db, ctx.tenantId, input.proposalId, {
+        decision: "reviewed_approved",
+        paymentId: result.paymentId,
+        reviewedBy: input.actorUserId,
+      });
+
+      return ok(result);
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) return err("duplicate_transaction");
+    throw error;
+  }
 }
 
 export type ReversePaymentError = "payment_not_found" | "already_reversed";

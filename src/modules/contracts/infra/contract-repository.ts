@@ -132,6 +132,28 @@ export async function listContractsByPayer(ctx: TenantContext, payerId: string):
   return rows.map(toContract);
 }
 
+/**
+ * Resolve `contractId`/`payerId` a partir de um `installmentId` — usado
+ * pela fila de revisão (Marco 5) para reconstruir o alvo já identificado
+ * pelo motor a partir de `reconciliation_proposals.proposedAllocations`
+ * (que só guarda `installmentId`, não contrato/pagador).
+ */
+export async function getInstallmentById(
+  ctx: TenantContext,
+  installmentId: string,
+): Promise<(Installment & { readonly payerId: string }) | null> {
+  const rows = await getDb(ctx, (db) =>
+    db
+      .select({ installment: installments, payerId: contracts.payerId })
+      .from(installments)
+      .innerJoin(contracts, eq(installments.contractId, contracts.id))
+      .where(and(eq(installments.tenantId, ctx.tenantId), eq(installments.id, installmentId)))
+      .limit(1),
+  );
+  const row = rows[0];
+  return row ? { ...toInstallment(row.installment), payerId: row.payerId } : null;
+}
+
 export async function listInstallmentsByContract(
   ctx: TenantContext,
   contractId: string,

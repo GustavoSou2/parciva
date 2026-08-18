@@ -44,11 +44,31 @@ documentado** neste marco — o módulo de fraude é da Fase 5 e não existe
 ainda; ver "Achados" e DECISIONS.md [17] para o que isso significa em
 termos do invariante 5 do CLAUDE.md.
 
-Próximo é o **Marco 5** — resto da Fase 2 sem corpus de comprovantes
-reais (Tier 0 real, Tier 1 PDF com camada de texto, tela de fila de
-revisão, segundo provedor de VLM).
+**Marco 5 (resto da Fase 2 sem corpus, sem VLM) concluído em
+18/08/2026** — Tier 0 (quase-duplicata por hash perceptual), Tier 1
+(PDF com camada de texto real) e a tela de fila de revisão
+(`/t/<slug>/review`). Segundo provedor de VLM e registro de custo
+saíram do escopo por decisão do usuário — ver DECISIONS.md [18].
 
-A camada SaaS (billing/admin) segue como fatia parcial de domínio, sem
+**Marco 6 (débitos cruzados) concluído em 18/08/2026** — isolamento
+cross-tenant testado contra Postgres real nas 13 tabelas de domínio
+originais (antes só `receipts`/`inbound_messages` tinham teste, apesar
+de RLS existir desde `0001_rls.sql` — a mesma lacuna que a decisão [13]
+já tinha revelado como risco real, não hipotético), CI real
+(`.github/workflows/ci.yml`, GitHub Actions) rodando `pnpm check` +
+`gitleaks` a cada push/PR, e logger estruturado (`src/shared/logger.ts`)
+nos processos de produção contínua (workers, rotas de webhook/API). Ver
+DECISIONS.md [20]/[21].
+
+**Painel de admin — rota e dado real corrigidos em 18/08/2026**
+(DECISIONS.md [24]): `src/app/(admin)/` virou `src/app/admin/` (a
+colisão de rota com `/` some), e as duas páginas existentes
+(`/admin`, `/admin/tenants`) agora consultam o banco de verdade via
+`getAdminDb()`, sem dado hardcoded. Escopo deliberadamente mínimo —
+resto da spec §12 (subdomínio, MFA, quebra-vidro, impersonação,
+feature flags, DLQ, ações) segue pendente, por decisão do usuário.
+
+A camada SaaS (billing) segue como fatia parcial de domínio, sem
 conexão a banco.
 
 ## O que está funcionando agora
@@ -91,6 +111,14 @@ Testado de ponta a ponta (unidade, sem banco/rede):
 - **Sessão e CSRF** (`src/modules/identity/domain/session.ts`) — geração/
   hash de token, expiração em 7 dias, token CSRF derivado por HMAC
   (comparação em tempo constante), tudo testado.
+- **PDF com camada de texto real** (`src/modules/ingestion/domain/
+  pdf-text.ts`, `pdfjs-dist`, Marco 5) — testado com PDF sintético com e
+  sem `FlateDecode` (o caso que `buffer.toString("utf-8")` não lia) e
+  com PDF corrompido/vazio (nunca lança).
+- **Hash perceptual / quase-duplicata** (`src/modules/ingestion/domain/
+  normalizer.ts`, aHash 64 bits, Marco 5) — determinístico, distância de
+  Hamming pequena entre a mesma imagem recomprimida em qualidades
+  diferentes, maior entre imagens diferentes.
 
 Testado contra Postgres vivo (não é mock — `tests/security/`, script
 `pnpm test:tenant`):
@@ -144,6 +172,22 @@ Redis do `docker-compose.yml`, sem mock):
   "A vencer", o pagamento como "Estornado" (chip novo, nunca reusa o
   rótulo "Rejeitado" — ver DECISIONS.md), e o `payment_reversed` somado
   ao `payment_applied` no histórico (nunca substituindo — append-only).
+- **Fila de revisão** (`reconciliation`/`ingestion`, Marco 5): via
+  script contra os módulos reais (não HTTP/Server Action, que exigiria
+  navegador para o token de ação do Next.js) — criei pagador + contrato
+  + um `receipt` real + uma `reconciliation_proposal` em `needs_review`
+  sem alvo (payer/contrato não identificados, mesmo caminho de
+  `reviewWithoutTarget`), confirmei que aparece em
+  `listProposalsByDecision`, aprovei escolhendo pagador/contrato na
+  mão: `payments.origin === "receipt"`, `verification_level ===
+  "document"` (nunca "confirmado"), `ledger_entries` gravado,
+  `proposal.decision === "reviewed_approved"` com `paymentId`
+  preenchido. Segunda tentativa de aprovar a mesma proposal falhou com
+  `already_reviewed`, como esperado (proteção contra duplo clique). As
+  páginas (`/t/<slug>/review`, `/t/<slug>/review/<id>`) e a rota de
+  arquivo (`/t/<slug>/receipts/<id>/file`) não foram clicadas num
+  navegador de verdade nesta verificação — só a lógica de aplicação
+  server-side foi exercitada contra Postgres real.
 
 ## Fases concluídas
 
@@ -167,16 +211,20 @@ que por fase:
   teste automatizado específico de "reenvio duplicado não gera baixa
   duplicada" (hoje só coberto indiretamente pela verificação manual), tratar
   mensagem fora de ordem, e validar em produção contra Twilio real (não só
-  contra job enfileirado manualmente). Falta pro DoD da Fase 2: corpus de
-  ≥200 comprovantes reais com gabarito, Tier 0 (cache por hash) e Tier 1
-  (PDF com camada de texto) — hoje um PDF cai direto no texto bruto do
-  buffer, sem parser real.
+  contra job enfileirado manualmente). Tier 0 (quase-duplicata por hash
+  perceptual) e Tier 1 (PDF com camada de texto real) fechados no Marco 5
+  (18/08/2026). Falta pro DoD da Fase 2: corpus de ≥200 comprovantes reais
+  com gabarito e a métrica formal de acurácia por campo — exigem documento
+  financeiro real de terceiro, banido do roadmap desde o início; e Tier 3
+  (VLM), fora de escopo por ora (DECISIONS.md [18]).
 - **Fatia de camada SaaS (equivalente a parte da Fase 4):** `billing`
-  (regras de cota) e um `admin` que é praticamente só tipos seguem sem
-  conexão a banco. `identity`/`tenant` deixaram de ser só domínio puro —
-  Marco 2 deu infra real e onboarding self-service funciona (signup →
-  tenant + owner + login). Falta faturamento real (gateway) e
-  quebra-vidro auditado no painel de superadmin.
+  (regras de cota) segue sem conexão a banco. `admin` ganhou conexão
+  real em 18/08/2026 (`src/app/admin/_lib/queries.ts`, DECISIONS.md
+  [24]) — dashboard e lista de tenants, escopo mínimo, sem
+  quebra-vidro/MFA/subdomínio. `identity`/`tenant` deixaram de ser só
+  domínio puro — Marco 2 deu infra real e onboarding self-service
+  funciona (signup → tenant + owner + login). Falta faturamento real
+  (gateway) e quebra-vidro auditado no painel de superadmin.
 - **Autenticação — Marco 2 do roadmap, concluído em 18/08/2026:** login
   e-mail/senha (Argon2id via `@node-rs/argon2`), sessão em Postgres
   (`sessions`, não JWT — revogável), convite de usuário (`invite_
@@ -272,44 +320,41 @@ que por fase:
   que `deriveCsrfToken`/`verifyCsrfToken` implementam — achado revisando
   o Marco 2 durante o planejamento do Marco 3. `SameSite=Lax` cobre a
   maior parte do risco (bloqueia POST cross-site em navegadores
-  modernos), mas é uma lacuna real, não uma decisão. Registrado como
-  pendência, não corrigido ainda.
+  modernos), mas era uma lacuna real. **Corrigido em 18/08/2026** — ver
+  DECISIONS.md [22] (cookie `parciva_csrf` + header `X-Csrf-Token`,
+  verificado ao vivo contra `next dev`).
 
 ## Em andamento
 
-- **Isolamento cross-tenant nas 13 tabelas de domínio originais** (`payers`,
-  `contracts`, `installments`, `payments`, `payment_allocations`,
-  `credit_balances`, `psp_connections`, `charges`, `charge_installments`,
-  `ledger_entries`, `memberships`, `subscriptions`, `usage_counters`,
-  `audit_logs`): protegidas por RLS desde `0001_rls.sql`, mas ainda sem
-  teste que exercite isso contra Postgres vivo — `tests/security/
-  tenant-isolation.test.ts` cobre hoje só `receipts`/`inbound_messages`
-  (as tabelas tocadas nesta tarefa). Dado o que a decisão [13] revelou (RLS
-  silenciosamente inativa em dev por meses), estender esse teste para as
-  tabelas originais é prioridade, não só desejável.
-- **Ingestão e extração** (`src/modules/ingestion/`): worker já persiste de
-  verdade, mas ainda não há Tier 0 (cache por `content_hash`/`perceptual_
-  hash` — a coluna existe, não é computada) nem Tier 1 (PDF com camada de
-  texto real — hoje o buffer de PDF é decodificado como texto bruto,
-  best-effort). VLM (Tier 3, `infra/anthropic-vlm.ts`) existe no código mas
-  não está plugado no worker em produção.
-- **UI real do produto — parcial.** `/t/<slug>/{contracts,payers}`
-  existem e funcionam (Marco 3), mas são formulários mínimos/tabelas
+- **Ingestão e extração** (`src/modules/ingestion/`): Tier 0
+  (quase-duplicata por hash perceptual) e Tier 1 (PDF real) fechados no
+  Marco 5. VLM (Tier 3, `infra/anthropic-vlm.ts`) existe no código mas
+  não está plugado no worker — por decisão do usuário, não falta técnica
+  (DECISIONS.md [18]): todo comprovante que Tier 1/2 não resolverem cai
+  em revisão humana, sem escalar a nenhum modelo.
+- **UI real do produto — parcial.** `/t/<slug>/{contracts,payers,review}`
+  existem e funcionam (Marcos 3 e 5), mas são formulários mínimos/tabelas
   simples — não a UI polida dos tokens Parciva (spec §13.2: hierarquia
   canvas→panel→card com sombra zero, escala tipográfica binária, etc.).
-  As outras 5 telas da spec (Painel, Fila de revisão, Comprovantes,
-  Configurações, Conta) não existem.
+  As outras 4 telas da spec (Painel, Comprovantes, Configurações, Conta)
+  não existem.
 - **Sem edição/exclusão de pagador ou contrato** (Marco 3 só fez
   criação + leitura) — se um dado for cadastrado errado, hoje não tem
   como corrigir pela UI.
-- **`login` não sabe pra qual tenant redirecionar** quando o usuário
-  pertence a mais de um (ou mesmo só um, sem informar o slug) — não
-  existe hoje um jeito de listar "meus tenants" sem já saber o slug de
-  um deles, porque `memberships` tem RLS de verdade (não dá pra
-  consultar às cegas sem `app.tenant_id` setado). Mitigado com um campo
-  opcional "empresa" no formulário de login (atalho de navegação, não
-  autenticação) — resolver isso de vez (tenant picker, ou lembrar o
-  último tenant acessado) fica pendente.
+- ~~**`login` não sabe pra qual tenant redirecionar**~~ — **resolvido em
+  18/08/2026** (DECISIONS.md [23]). Segunda policy de RLS em
+  `memberships`, só de SELECT, escopada ao próprio usuário
+  (`self_membership_lookup`), acessada via `getUserDb`/
+  `listMembershipsForUser` — nunca bypassa RLS. `/api/auth/login`
+  devolve a lista de tenants do usuário; 0 mostra erro, 1 redireciona
+  direto, 2+ mostra escolha inline na própria tela de login (campo
+  manual "empresa" removido). Achado no processo: `current_setting`
+  de uma GUC customizada "reseta" pra string vazia (não `NULL`) numa
+  conexão pooled já usada por outra função de acesso — corrigido com
+  `NULLIF(..., '')` nas duas policies de `memberships`
+  (`0011_harden_membership_rls_null_guc.sql`). Verificado ao vivo
+  contra `next dev`: usuário em 2 tenants recebe os dois no login,
+  usuário em 1 recebe só o dele.
 
 ## Roadmap ativo (marcos, débito das Fases 0–3)
 
@@ -371,70 +416,85 @@ manual, sem nenhum jeito de uma pessoa de verdade usar o produto.
    `extractPaidAt` corrigido. Verificado ponta a ponta contra fila +
    worker + Postgres reais (telefone bate pagador + valor exato de
    parcela → auto-aplicado; telefone desconhecido → revisão).
-5. **Marco 5 — Resto da Fase 2 (sem corpus)** — **próximo passo, ainda
-   sem plano de execução aprovado.** Fecha o DoD da Fase 2 que não
-   depende de corpus real (métrica formal de acurácia por campo fica
-   de fora — exigiria comprovante real, banido pelo roadmap). Entregas
-   previstas, na ordem em que a spec (§7.1/§14 Fase 2) as descreve:
-   - **Tier 0 — cache por hash.** `receipts.perceptual_hash` existe no
-     schema desde a fundação mas nunca foi computado. Precisa de: (a)
-     `computeHash` (já existe, `content_hash`/SHA-256) virar um check
-     de cache-hit ANTES de gastar qualquer tier pago — hoje só serve
-     pra dedupe/idempotência, não pra reaproveitar uma extração já
-     feita; (b) calcular `perceptual_hash` (pHash) na normalização de
-     imagem (`domain/normalizer.ts`) pra pegar reenvio com recorte/
-     recompressão (C-02), não só bytes idênticos.
-   - **Tier 1 — PDF com camada de texto real.** Hoje `ingest-receipt.ts`
-     decodifica o buffer de PDF como texto bruto (`buffer.toString
-     ("utf-8")`) — funciona por acidente em PDF não comprimido, falha
-     silenciosamente (texto vazio/lixo) em qualquer PDF gerado por banco
-     de verdade. Precisa de um parser real de camada de texto (ex.:
-     `pdfjs-dist`, equivalente Node do `pdfplumber` da spec) antes do
-     regex determinístico rodar sobre PDF.
-   - **Tier 3 — segundo provedor de VLM + fallback.** `infra/
-     anthropic-vlm.ts` é hoje uma chamada hardcoded a um único provedor,
-     sem a interface `ExtractionProvider` que a spec pede (§7.3) para
-     trocar de provedor "por variável de ambiente, não refactor"; e o
-     worker não chama nenhum VLM em produção (`receipt-worker.ts` só
-     roda determinístico + OCR). Este marco precisa: (a) desenhar essa
-     interface; (b) escolher e plugar um segundo provedor — **decisão a
-     tomar com o usuário**, com o mesmo requisito duro da spec (opt-out
-     de treinamento, retenção zero/curta — não é só custo/qualidade);
-     (c) ligar o VLM no worker de verdade, com fallback em cascata
-     (Tier 3 → Tier 4 só se confiança baixa ou valor acima do teto,
-     `VLM_CONFIDENCE_THRESHOLD` já existe em `ingest-receipt.ts`).
-   - **Registro de custo por extração.** `receipt_extractions.
-     cost_micros`/`provider`/`model`/`latency_ms` já existem no schema e
-     em `NewReceiptExtraction` (`infra/receipt-repository.ts`), mas o
-     worker não preenche nenhum deles hoje — fica pronto pra usar assim
-     que o VLM estiver plugado (item acima).
-   - **Tela de fila de revisão** (`/t/<slug>/review` ou nome a definir)
-     — comprovante × proposta lado a lado (spec: "comprovante ×
-     proposta"), aprovar/rejeitar. A infra já existe e está ociosa desde
-     o Marco 4: `reconciliation_proposals.reviewed_by/reviewed_at/
-     review_note` e `markProposalDecision` (`reconciliation/infra/
-     proposal-repository.ts`) foram construídos no Marco 4 mas nenhuma
-     UI os chama ainda — hoje a única forma de ver o que caiu em
-     `needs_review` é consultar o banco direto.
-   - **Fora do Marco 5, deliberadamente:** Tier 1.5 (QR Code/BR Code
-     EMV no comprovante — a spec lista como "variável", não crítico
-     pro caminho principal); corpus de ≥200 comprovantes reais com
-     gabarito e a métrica formal de acurácia por campo (exigem
-     documento financeiro real de terceiro, banido do roadmap desde o
-     início); orçamento por tenant/circuit breaker de custo (§7.5 —
-     depende de billing real, que é dívida de Fase 4 separada).
-6. **Marco 6 — Débitos cruzados** — estender `tenant-isolation.test.ts`
-   às 13 tabelas de domínio originais (RLS estava inativa em dev sem
-   ninguém saber — DECISIONS.md [13] — então isso é mais urgente do que
-   parece), CI local versionado, logger estruturado.
+5. ~~**Marco 5 — Resto da Fase 2 (sem corpus, sem VLM)**~~ —
+   **concluído 18/08/2026.** Escopo original incluía Tier 3 (segundo
+   provedor de VLM); perguntado antes de implementar, o usuário optou
+   por **só OCR, sem gasto com LLM por enquanto** — ver DECISIONS.md
+   [18]. O que foi entregue:
+   - **Tier 0 — quase-duplicata por hash perceptual.**
+     `computePerceptualHash`/`hammingDistance`
+     (`ingestion/domain/normalizer.ts`, aHash 64 bits via `sharp`, sem
+     dependência nova) + `findNearDuplicateByPerceptualHash`
+     (`infra/receipt-repository.ts`, varre as 200 receipts mais
+     recentes do tenant — Hamming distance não é indexável no
+     Postgres). Reenvio recortado/recomprimido (spec C-02) agora cai no
+     mesmo caminho de `duplicate` que bytes idênticos já usavam — sem
+     OCR redundante. `content_hash` exato já causava short-circuit
+     antes deste marco; só faltava a parte de quase-duplicata.
+   - **Tier 1 — PDF com camada de texto real.** `ingestion/domain/
+     pdf-text.ts` (`extractPdfText`, via `pdfjs-dist`) substitui
+     `buffer.toString("utf-8")` — que funcionava só por acidente em PDF
+     não comprimido. Testado com fixtures de PDF sintéticas (não corpus
+     real) com e sem `FlateDecode`, e com PDF corrompido/vazio (nunca
+     lança, devolve `""` — mesmo contrato de "sem contribuição" da
+     cascata).
+   - **Tela de fila de revisão** (`/t/<slug>/review` +
+     `/t/<slug>/review/<proposalId>`) — lista `needs_review`, mostra
+     comprovante (nova rota `/t/<slug>/receipts/<id>/file`, lê do disco
+     via `readReceiptFile`) × dados extraídos lado a lado. "Rejeitar"
+     usa `markProposalDecision` (ocioso desde o Marco 4). "Aprovar"
+     é caminho novo (`approveReceiptProposal`,
+     `reconciliation/infra/payment-repository.ts`): recalcula a
+     alocação na hora (nunca reaproveita o que foi gravado quando a
+     proposta foi criada), trava a proposal contra duplo clique
+     (`already_reviewed`), aplica o pagamento como `origin: "receipt"`/
+     `verificationLevel: "document"` (nunca "confirmado" — decisão
+     [5]) e grava a decisão como `reviewed_approved` — valor de enum
+     novo, distinto de `auto_applied` (decisão [19], quem decidiu fica
+     na auditoria). Verificado ponta a ponta contra Postgres real
+     (criar proposal sem alvo → listar → aprovar escolhendo
+     pagador/contrato → conferir `payments`/`ledger_entries` → segunda
+     tentativa de aprovar falha com `already_reviewed`).
+   - **Fora do Marco 5** (por decisão do usuário, DECISIONS.md [18]):
+     Tier 3/4 (VLM), segundo provedor, interface `ExtractionProvider`
+     plugável, registro de custo por extração (`cost_micros` continua
+     `NULL` — sem VLM não há custo a registrar). Também fora,
+     deliberadamente, como já era antes: Tier 1.5 (QR/BR Code EMV);
+     corpus de ≥200 comprovantes reais com gabarito e métrica formal de
+     acurácia (exigem documento financeiro real de terceiro, banido do
+     roadmap desde o início); orçamento por tenant/circuit breaker de
+     custo (§7.5 — depende de billing real, Fase 4 separada).
+6. ~~**Marco 6 — Débitos cruzados**~~ — **concluído 18/08/2026.**
+   `tests/security/` ganhou 3 arquivos novos cobrindo as 13 tabelas de
+   domínio originais (payers/contracts/installments/payments/
+   payment_allocations/credit_balances/ledger_entries via o motor real,
+   `executeManualPayment`; psp_connections/charges/charge_installments
+   via insert cru, Modelo B sem repositório ainda; memberships/
+   subscriptions/usage_counters/audit_logs — este último com teste
+   extra confirmando que a linha global do superadmin, tenant_id NULL,
+   não vaza pra sessão nenhuma). `pnpm test:tenant` virou
+   `vitest run tests/security` (glob). CI real em
+   `.github/workflows/ci.yml` (GitHub Actions): Postgres/Redis
+   efêmeros, roda `infra/init-db.sql` (mesmo script de dev) antes de
+   migrar, `pnpm check` + `pnpm secrets:scan` (gitleaks) a cada push/PR
+   — validado localmente ponta a ponta contra containers descartáveis
+   antes de existir a primeira run real. Logger estruturado
+   (`src/shared/logger.ts`, hand-rolled) nos workers e rotas de
+   webhook/API — `db/seed.ts`/`db/migrate.ts` ficaram de fora de
+   propósito. Achado lateral corrigido junto: dois lockfiles no
+   repositório (resolvido a favor de `pnpm-lock.yaml`) e
+   `db:migrate`/`db:seed` sem `--env-file=.env`. Ver DECISIONS.md
+   [20]/[21].
 
-Provisionar o role `parciva_app` fora do `docker-compose.yml` de dev
-(staging/produção precisam da mesma separação de role, DECISIONS.md
-[13]) fica registrado como dívida de infra, fora deste roadmap de
-código. Checar o token CSRF em `/api/team/invite` (achado do Marco 3,
-nunca foi ligado no Marco 2) e resolver o "pra qual tenant o login
-redireciona" (ver "Em andamento" acima) também ficam como dívida solta,
-pequenas o bastante pra não merecerem marco próprio.
+Provisionar o role `parciva_app` **em CI já está resolvido** (o job
+roda `infra/init-db.sql` antes de migrar) — falta só staging/produção,
+que continuam como dívida de infra separada (DECISIONS.md [13]).
+
+**Dívidas soltas pequenas — concluídas em 18/08/2026:** CSRF em
+`/api/team/invite` e `db:reset` implementado (DECISIONS.md [22]);
+"pra qual tenant o login redireciona" também fechado, à parte, por
+mexer no modelo de RLS (DECISIONS.md [23] — segunda policy em
+`memberships`, `getUserDb`/`listMembershipsForUser`).
 
 ## Pendências conhecidas
 
@@ -469,10 +529,10 @@ pequenas o bastante pra não merecerem marco próprio.
 - **Módulos da spec ainda sem pasta**: `fraud`, `charges`, `psp` (`payers`,
   `contracts`, `ledger`, `reconciliation` existem desde o Marco 1,
   18/08/2026).
-- **`src/shared/{crypto,errors,logger}.ts` não existem.** Não há logger
-  estruturado (tudo é `console.log`/`console.error` direto), nem
-  criptografia de coluna para documento/telefone. (`storage.ts` já existe,
-  em v1 mínima — ver DECISIONS.md [7].)
+- **`src/shared/{crypto,errors}.ts` não existem.** Não há criptografia de
+  coluna para documento/telefone. (`logger.ts` existe desde o Marco 6,
+  DECISIONS.md [21] — cobertura parcial, só processos de produção
+  contínua; `storage.ts` já existe, em v1 mínima — ver DECISIONS.md [7].)
 - **Dependências instaladas e não usadas**: `twilio` (SDK) não é importado
   em nenhum arquivo — o código chama a REST API do Twilio manualmente via
   `fetch`; `sharp` só é usado em `normalizer.ts`, ainda longe da cobertura
@@ -482,11 +542,15 @@ pequenas o bastante pra não merecerem marco próprio.
   fundação (schema, docs, config) que os commits de "fase 3" e "fase 4"
   (13/08/2026) já pressupunham. Não afeta o estado atual do código, mas
   vale ter em mente ao interpretar o histórico.
-- **Painel de superadmin é UI estática**: `src/app/(admin)/page.tsx` e
-  `tenants/page.tsx` mostram métricas e tenants hardcoded, não consultam o
-  banco. Não há quebra-vidro auditado (§12 da spec) implementado. Há também
-  uma colisão de rota conhecida e documentada no `README.md` do módulo
-  `admin`: `(admin)/page.tsx` e `src/app/page.tsx` disputam `/`.
+- **Painel de superadmin — rota e dado real corrigidos (18/08/2026,
+  DECISIONS.md [24]), resto segue pendente.** `src/app/admin/{page,
+  tenants/page}.tsx` (era `(admin)`, colidia com `/`) agora consultam
+  `getAdminDb()` de verdade — verificado ao vivo, números batendo com
+  o banco. Ainda faltam, por decisão explícita de escopo mínimo:
+  subdomínio real (path `/admin` é só o desbloqueio, não o alvo
+  final), MFA/login independente (auth continua `x-admin-secret`),
+  quebra-vidro auditado (§12 da spec), impersonação, feature flags,
+  fila de DLQ, ações (mudar plano/suspender/conceder crédito).
 - **`pnpm test`/`pnpm check` agora exigem Postgres no ar** (docker-compose
   do `infra/`) — `tests/security/tenant-isolation.test.ts` roda contra
   banco real, não mock, e `vitest.config.ts` carrega `.env` automaticamente
@@ -499,6 +563,24 @@ pequenas o bastante pra não merecerem marco próprio.
   `amount_cents` das parcelas futuras é reestruturação de cronograma,
   não alocação de um pagamento — não cabe no formato atual de
   `AllocationResult` (`reconciliation/domain/types.ts`).
+- **VLM (Tier 3/4), segundo provedor e registro de custo — fora do
+  roadmap ativo por decisão do usuário** (Marco 5, DECISIONS.md [18]):
+  "por enquanto, só OCR, sem gasto com LLM". `infra/anthropic-vlm.ts`
+  segue no código, sem uso; `receipt_extractions.cost_micros` continua
+  `NULL`. Retomar quando o usuário decidir gastar com LLM — não é
+  esquecimento, é escolha registrada.
+- **Dois lockfiles no repositório — resolvido no Marco 6.** Achado no
+  Marco 5 (`pnpm install` revelou `package-lock.json` do npm,
+  inconsistente com os comandos `pnpm` do CLAUDE.md). Confirmado com o
+  usuário: `package-lock.json` removido do controle de versão,
+  `pnpm-lock.yaml` é o único lockfile agora, `packageManager:
+  "pnpm@9.15.9"` fixado no `package.json`.
+- **`db:reset` estava quebrado — corrigido em 18/08/2026.** `package.json`
+  chamava `tsx src/db/reset.ts`, mas esse arquivo nunca existiu no
+  repositório (achado durante o Marco 6). Implementado (DECISIONS.md
+  [22]) como `TRUNCATE ... CASCADE` em todas as tabelas de `public`,
+  com guarda contra rodar fora de `localhost`. Testado de verdade
+  contra o Postgres de dev.
 - **Fora de escopo do Marco 4, deliberadamente:** item 4 do §6.3
   (referência externa tipo "CTR-00432" na mensagem do PIX —
   `ExtractionOutput` não tem esse campo, adicioná-lo mudaria o contrato

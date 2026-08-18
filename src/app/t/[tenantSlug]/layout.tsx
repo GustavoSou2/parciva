@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { deleteSession, logout } from "@/modules/identity";
-import { SESSION_COOKIE_NAME } from "@/shared/session-cookie";
+import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from "@/shared/session-cookie";
 import { Button } from "@/ui/components/Button";
 
 async function logoutAction(): Promise<void> {
@@ -15,13 +15,14 @@ async function logoutAction(): Promise<void> {
     await logout(token, { deleteSession });
   }
   cookieStore.delete(SESSION_COOKIE_NAME);
+  cookieStore.delete(CSRF_COOKIE_NAME);
   redirect("/login");
 }
 
 /**
  * Cabeçalho mínimo — não a navegação completa da spec §13.2 (7 telas:
  * Painel, Fila de revisão, Contratos, Pagadores, Comprovantes,
- * Configurações, Conta). Só Contratos/Pagadores existem neste marco.
+ * Configurações, Conta). Só Contratos/Pagadores/Revisão existem até este marco.
  */
 export default async function TenantLayout({
   children,
@@ -49,6 +50,12 @@ export default async function TenantLayout({
             className="text-body text-content-secondary hover:text-content-primary"
           >
             Pagadores
+          </Link>
+          <Link
+            href={`/t/${tenantSlug}/review`}
+            className="text-body text-content-secondary hover:text-content-primary"
+          >
+            Revisão
           </Link>
         </nav>
         <form action={logoutAction}>

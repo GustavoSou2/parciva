@@ -14,6 +14,7 @@ export {
   externalRefExists,
   saveContractWithSchedule,
   getContractById,
+  getInstallmentById,
   listContracts,
   listContractsByPayer,
   listInstallmentsByContract,

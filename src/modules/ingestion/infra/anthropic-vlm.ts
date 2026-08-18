@@ -18,6 +18,7 @@
  */
 
 import { isErr } from "@/shared/result";
+import { logger } from "@/shared/logger";
 import { validateExtractionOutput } from "../domain/extraction-schema";
 import type { ExtractionOutput } from "../domain/types";
 
@@ -87,7 +88,7 @@ export async function runVlmExtraction(
 ): Promise<Partial<ExtractionOutput>> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.error("[anthropic-vlm] ANTHROPIC_API_KEY não configurada");
+    logger.error("ANTHROPIC_API_KEY não configurada");
     return {};
   }
 
@@ -121,12 +122,12 @@ export async function runVlmExtraction(
       }),
     });
   } catch (error) {
-    console.error("[anthropic-vlm] falha de rede ao chamar a API", error);
+    logger.error("falha de rede ao chamar a API", { error });
     return {};
   }
 
   if (!response.ok) {
-    console.error("[anthropic-vlm] API retornou erro", { status: response.status });
+    logger.error("API retornou erro", { status: response.status });
     return {};
   }
 
@@ -134,13 +135,13 @@ export async function runVlmExtraction(
   try {
     data = (await response.json()) as AnthropicMessageResponse;
   } catch (error) {
-    console.error("[anthropic-vlm] falha ao parsear resposta da API", error);
+    logger.error("falha ao parsear resposta da API", { error });
     return {};
   }
 
   const textBlock = data.content?.find((block) => block.type === "text");
   if (!textBlock?.text) {
-    console.error("[anthropic-vlm] resposta sem bloco de texto");
+    logger.error("resposta sem bloco de texto");
     return {};
   }
 
@@ -148,17 +149,17 @@ export async function runVlmExtraction(
   try {
     parsedJson = JSON.parse(stripMarkdownFence(textBlock.text));
   } catch (error) {
-    console.error("[anthropic-vlm] resposta não é JSON válido", error);
+    logger.error("resposta não é JSON válido", { error });
     return {};
   }
 
   const validated = validateExtractionOutput(roundAmountCents(parsedJson));
   if (isErr(validated)) {
-    console.error("[anthropic-vlm] saída fora do contrato", validated.error);
+    logger.error("saída fora do contrato", { validationError: validated.error });
     return {};
   }
 
-  console.log("[anthropic-vlm] extração concluída", {
+  logger.info("extração concluída", {
     model: MODEL,
     inputTokens: data.usage?.input_tokens,
     outputTokens: data.usage?.output_tokens,

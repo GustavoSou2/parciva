@@ -6,13 +6,11 @@
  * spec (isso viria com uma tela de "Conta"/onboarding própria, fora do
  * escopo dos marcos atuais).
  *
- * Campo "empresa" é um atalho de navegação, não autenticação — o
- * usuário pode pertencer a mais de um tenant, e não existe hoje um
- * jeito de listar "meus tenants" sem já saber o slug de um deles
- * (`memberships` tem RLS de verdade, não dá pra fazer essa consulta às
- * cegas — ver comentário em `identity/infra/membership-repository.ts`).
- * Deixado vazio, cai em `/`. A validação real de acesso continua
- * acontecendo em `requireTenantSession` na página seguinte, não aqui.
+ * Sem campo manual de "empresa" — `/api/auth/login` agora devolve a
+ * lista real de tenants do usuário (`listMembershipsForUser`, via
+ * `getUserDb`/policy `self_membership_lookup`, sem bypassar RLS —
+ * DECISIONS.md). Login com 1 tenant só redireciona direto; com mais de
+ * um, mostra a escolha aqui mesmo, sem navegar pra outra página.
  */
 
 import { useState, type FormEvent } from "react";
@@ -23,12 +21,17 @@ import { Input } from "@/ui/components/Input";
 import { Button } from "@/ui/components/Button";
 import { ErrorNote } from "@/ui/components/ErrorNote";
 
+interface TenantOption {
+  readonly slug: string;
+  readonly name: string;
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [tenantSlug, setTenantSlug] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[] | null>(null);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -49,7 +52,15 @@ export default function LoginPage() {
         );
         return;
       }
-      window.location.href = tenantSlug.trim() ? `/t/${tenantSlug.trim()}/contracts` : "/";
+
+      const data = (await response.json()) as { tenants: TenantOption[] };
+      if (data.tenants.length === 0) {
+        setError("Sua conta não pertence a nenhuma empresa ainda.");
+      } else if (data.tenants.length === 1) {
+        window.location.href = `/t/${data.tenants[0]!.slug}/contracts`;
+      } else {
+        setTenantOptions(data.tenants);
+      }
     } finally {
       setLoading(false);
     }
@@ -58,36 +69,50 @@ export default function LoginPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-card-gap p-card-pad">
       <Eyebrow>Parciva</Eyebrow>
-      <Card>
-        <form onSubmit={(e) => void onSubmit(e)} className="flex flex-col gap-card-gap">
-          <p className="text-title">Entrar</p>
-          <Field label="E-mail">
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              autoComplete="email"
-            />
-          </Field>
-          <Field label="Senha">
-            <Input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-            />
-          </Field>
-          <Field label="Empresa (opcional — slug da URL, ex.: padaria-sao-jorge)">
-            <Input value={tenantSlug} onChange={(e) => setTenantSlug(e.target.value)} />
-          </Field>
-          {error && <ErrorNote>{error}</ErrorNote>}
-          <Button type="submit" disabled={loading}>
-            {loading ? "Entrando..." : "Entrar"}
-          </Button>
-        </form>
-      </Card>
+      {tenantOptions ? (
+        <Card>
+          <p className="text-title">Escolha a empresa</p>
+          <div className="mt-card-gap flex flex-col gap-2">
+            {tenantOptions.map((tenant) => (
+              <a
+                key={tenant.slug}
+                href={`/t/${tenant.slug}/contracts`}
+                className="rounded-field border-hairline border-line-hairline px-3 py-2 text-body text-content-primary hover:border-line-strong"
+              >
+                {tenant.name}
+              </a>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <form onSubmit={(e) => void onSubmit(e)} className="flex flex-col gap-card-gap">
+            <p className="text-title">Entrar</p>
+            <Field label="E-mail">
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+              />
+            </Field>
+            <Field label="Senha">
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+              />
+            </Field>
+            {error && <ErrorNote>{error}</ErrorNote>}
+            <Button type="submit" disabled={loading}>
+              {loading ? "Entrando..." : "Entrar"}
+            </Button>
+          </form>
+        </Card>
+      )}
     </main>
   );
 }

@@ -35,6 +35,11 @@ const STATUS = {
   // "Rejeitado" (spec §13.3: nomear pelo que a pessoa controla, com
   // precisão — estorno não é a mesma coisa que rejeição).
   reversed: { label: "Estornado", style: "border-line-strong line-through text-content-primary" },
+  // `reconciliation_proposals.decision === "reviewed_approved"` (Marco 5)
+  // — nunca reusar o label "Confirmado" (decisão [5]: reservado a
+  // `psp_confirmed`, confirmação real do PSP). Aprovação humana na fila
+  // de revisão continua sendo comprovante, não confirmação bancária.
+  reviewed_approved: { label: "Aprovado na revisão", style: "border-line-strong text-content-primary" },
 } as const;
 
 export function StatusChip({ status }: { status: keyof typeof STATUS }) {

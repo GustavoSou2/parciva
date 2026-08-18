@@ -7,7 +7,9 @@
  * quem pode chamar esta função precisa ser mínimo.
  *
  * lint-disable-reason: este módulo só pode ser importado por
- * `src/app/(admin)/**` (o painel de administração, spec §12). Nenhum
+ * `src/app/admin/**` (o painel de administração, spec §12 — a pasta
+ * era `(admin)`, grupo de rota, mas isso colidia com `/`; virou `admin`
+ * de propósito, ver DECISIONS.md). Nenhum
  * `src/modules/**` deve importar admin-client.ts — um repositório de
  * domínio que enxergasse este cliente contornaria a RLS por engano, não
  * por decisão. Hoje essa restrição vive só neste comentário; a próxima

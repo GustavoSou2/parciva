@@ -12,7 +12,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 function storageRoot(): string {
@@ -56,4 +56,20 @@ export async function saveReceiptFile(
   await rename(tmpPath, finalPath);
 
   return storageKey;
+}
+
+/**
+ * Lê o comprovante de volta — usado pela fila de revisão (Marco 5,
+ * `/t/<slug>/receipts/<id>/file`) para mostrar o arquivo original.
+ * `storageKey` chega SEMPRE do banco (nunca de input bruto do usuário —
+ * invariante 12), então não há travessia de caminho a validar aqui: quem
+ * chama já filtrou por `tenant_id` antes de ler o `storage_key`.
+ *
+ * Em produção, isto deveria virar `X-Accel-Redirect` pro Nginx (decisão
+ * [7]) — não há Nginx em dev, então a rota lê e devolve o buffer direto;
+ * dívida registrada, não escondida.
+ */
+export async function readReceiptFile(storageKey: string): Promise<Buffer> {
+  const root = storageRoot();
+  return readFile(path.join(root, storageKey));
 }

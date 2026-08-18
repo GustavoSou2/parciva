@@ -14,19 +14,20 @@
  */
 
 import { createWorker } from "tesseract.js";
+import { logger } from "@/shared/logger";
 
 export async function extractTextFromImage(buffer: Buffer): Promise<string> {
   try {
     const worker = await createWorker("por");
     try {
       const { data } = await worker.recognize(buffer);
-      console.log(`[ocr] texto extraído: ${data.text.length} chars`);
+      logger.debug("texto extraído via OCR", { chars: data.text.length });
       return data.text;
     } finally {
       await worker.terminate();
     }
   } catch (error) {
-    console.error("[ocr] falha ao extrair texto", error);
+    logger.error("falha ao extrair texto via OCR", { error });
     return "";
   }
 }

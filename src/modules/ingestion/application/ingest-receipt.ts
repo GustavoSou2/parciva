@@ -10,8 +10,10 @@
 import type { TenantContext } from "@/db/client";
 import type { Result } from "@/shared/result";
 import { err, isErr, ok } from "@/shared/result";
+import { logger } from "@/shared/logger";
 import { extractFromText } from "../domain/deterministic-extractor";
-import { computeHash, normalizeImage, normalizeMime } from "../domain/normalizer";
+import { computeHash, computePerceptualHash, normalizeImage, normalizeMime } from "../domain/normalizer";
+import { extractPdfText } from "../domain/pdf-text";
 import { mergeExtractions } from "../domain/pipeline";
 import type { ExtractionTierContribution } from "../domain/pipeline";
 import { validateExtractionOutput } from "../domain/extraction-schema";
@@ -39,6 +41,8 @@ export type IngestError =
 
 export interface IngestDeps {
   checkDuplicate(hash: string): Promise<boolean>;
+  /** Tier 0 quase-duplicata (spec §7.1/C-02) — só chamado para imagem, com o aHash já computado. */
+  checkNearDuplicate?(perceptualHash: string): Promise<boolean>;
   runDeterministicExtraction(text: string): Partial<ExtractionOutput>;
   runOcrExtraction?(image: Buffer): Promise<string>;
   runVlmExtraction?(image: Buffer): Promise<Partial<ExtractionOutput>>;
@@ -68,14 +72,32 @@ export async function ingestReceipt(
   if (await deps.checkDuplicate(hash)) return err("duplicate");
 
   const isImage = mime.startsWith("image/");
+
+  // Tier 0 quase-duplicata (spec §7.1/C-02): reenvio recortado/recomprimido
+  // do MESMO comprovante não bate no hash exato acima, mas bate no aHash.
+  // Só para imagem — PDF de texto não tem essa classe de reenvio. Falha ao
+  // computar (buffer corrompido que passou pelo magic-byte check) não deve
+  // derrubar a ingestão: segue sem checar quase-duplicata.
+  if (isImage && deps.checkNearDuplicate) {
+    let perceptualHash: string | undefined;
+    try {
+      perceptualHash = await computePerceptualHash(raw.buffer);
+    } catch {
+      perceptualHash = undefined;
+    }
+    if (perceptualHash && (await deps.checkNearDuplicate(perceptualHash))) {
+      return err("duplicate");
+    }
+  }
+
   const normalizedImage = isImage ? await normalizeImage(raw.buffer) : null;
 
-  // Sem extração de camada de texto de PDF implementada ainda (Tier 1
-  // texto — spec §7.1, tarefa futura): para PDF, decodifica o buffer
-  // bruto como texto (best-effort, funciona quando o PDF não usa stream
-  // comprimido); para imagem, não há texto nativo, então o
-  // determinístico roda vazio aqui e o texto real vem do OCR abaixo.
-  const deterministicText = isImage ? "" : raw.buffer.toString("utf-8");
+  // Tier 1 texto (spec §7.1): para PDF, extrai a camada de texto real via
+  // `pdfjs-dist` (`extractPdfText`, nunca lança — PDF sem camada de texto
+  // ou corrompido devolve "", igual a "sem contribuição" deste tier); para
+  // imagem, não há texto nativo, então o determinístico roda vazio aqui e
+  // o texto real vem do OCR abaixo.
+  const deterministicText = isImage ? "" : await extractPdfText(raw.buffer);
 
   let deterministicOutput: Partial<ExtractionOutput>;
   try {
@@ -104,9 +126,10 @@ export async function ingestReceipt(
 
   if (ranOcr) {
     const auto = deterministicMerge.value.confidence >= VLM_CONFIDENCE_THRESHOLD;
-    console.log(
-      `[ocr] confidence: ${deterministicMerge.value.confidence} → ${auto ? "auto" : "review"}`,
-    );
+    logger.debug("confiança pós-OCR", {
+      confidence: deterministicMerge.value.confidence,
+      decision: auto ? "auto" : "review",
+    });
   }
 
   // VLM (Tier 3) nunca entra no caminho de imagem/OCR (confiança baixa

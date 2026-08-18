@@ -1,15 +1,6 @@
 import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import { unauthorized } from "next/navigation";
-import { getAdminDb } from "@/db/admin-client";
-
-/**
- * Layout raiz do painel de superadmin — spec §12. `getAdminDb()` é
- * importado aqui para deixar explícito que este é o único ponto do
- * projeto autorizado a fazer isso (comentário em admin-client.ts); as
- * páginas de tarefa 4 chamam a função quando pararem de ser stub.
- */
-void getAdminDb;
 
 /**
  * Placeholder de autenticação — spec §12 ainda pede MFA e login

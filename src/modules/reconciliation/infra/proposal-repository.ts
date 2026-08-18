@@ -6,12 +6,27 @@
  * sempre é gravada, auto-aplicada ou não; nunca condicional.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb, type TenantContext, type TenantDb } from "@/db/client";
 import { reconciliationProposals } from "@/db/schema/financial";
-import type { AllocationLine } from "../domain/types";
+import type { AllocationLine, Proposal, ProposalDecision } from "../domain/types";
 
-export type ProposalDecision = "auto_applied" | "needs_review" | "rejected";
+export type { ProposalDecision };
+
+function toProposal(row: typeof reconciliationProposals.$inferSelect): Proposal {
+  return {
+    id: row.id,
+    receiptId: row.receiptId,
+    paymentId: row.paymentId,
+    proposedAllocations: row.proposedAllocations as readonly AllocationLine[],
+    confidence: Number(row.confidence),
+    decision: row.decision,
+    reviewedBy: row.reviewedBy,
+    reviewedAt: row.reviewedAt,
+    reviewNote: row.reviewNote,
+    createdAt: row.createdAt,
+  };
+}
 
 export interface NewProposal {
   readonly receiptId: string;
@@ -50,7 +65,33 @@ export async function createProposal(
   return getDb(ctx, (db) => createProposalTx(db, ctx.tenantId, data));
 }
 
-/** Fila de revisão humana (spec §6.6) — sem UI que chame isto ainda; infra pronta para o marco que adicionar a tela. */
+/** Lista para `/t/<slug>/review` (Marco 5) — mais recente primeiro. */
+export async function listProposalsByDecision(
+  ctx: TenantContext,
+  decision: ProposalDecision,
+): Promise<Proposal[]> {
+  const rows = await getDb(ctx, (db) =>
+    db
+      .select()
+      .from(reconciliationProposals)
+      .where(and(eq(reconciliationProposals.tenantId, ctx.tenantId), eq(reconciliationProposals.decision, decision)))
+      .orderBy(desc(reconciliationProposals.createdAt)),
+  );
+  return rows.map(toProposal);
+}
+
+export async function getProposalById(ctx: TenantContext, proposalId: string): Promise<Proposal | null> {
+  const rows = await getDb(ctx, (db) =>
+    db
+      .select()
+      .from(reconciliationProposals)
+      .where(and(eq(reconciliationProposals.tenantId, ctx.tenantId), eq(reconciliationProposals.id, proposalId)))
+      .limit(1),
+  );
+  return rows[0] ? toProposal(rows[0]) : null;
+}
+
+/** Fila de revisão humana (spec §6.6, tela `/t/<slug>/review` — Marco 5) — usada pelo caminho "rejeitar" (sem pagamento envolvido, sem transação própria). */
 export async function markProposalDecision(
   ctx: TenantContext,
   proposalId: string,
@@ -69,4 +110,42 @@ export async function markProposalDecision(
         and(eq(reconciliationProposals.tenantId, ctx.tenantId), eq(reconciliationProposals.id, proposalId)),
       ),
   );
+}
+
+/**
+ * `SELECT ... FOR UPDATE` — usada por `approveReceiptProposal`
+ * (`infra/payment-repository.ts`) dentro da MESMA transação que aplica o
+ * pagamento, para proteger contra duplo clique/duas abas aprovando a
+ * mesma proposta ao mesmo tempo (mesmo padrão de
+ * `lockInstallmentsByContractTx`, módulo `contracts`).
+ */
+export async function lockProposalByIdTx(
+  db: TenantDb,
+  tenantId: string,
+  proposalId: string,
+): Promise<Proposal | null> {
+  const rows = await db
+    .select()
+    .from(reconciliationProposals)
+    .where(and(eq(reconciliationProposals.tenantId, tenantId), eq(reconciliationProposals.id, proposalId)))
+    .for("update");
+  return rows[0] ? toProposal(rows[0]) : null;
+}
+
+export async function markProposalReviewedTx(
+  db: TenantDb,
+  tenantId: string,
+  proposalId: string,
+  data: { decision: ProposalDecision; paymentId: string | null; reviewedBy: string; reviewNote?: string },
+): Promise<void> {
+  await db
+    .update(reconciliationProposals)
+    .set({
+      decision: data.decision,
+      paymentId: data.paymentId,
+      reviewedBy: data.reviewedBy,
+      reviewedAt: new Date(),
+      reviewNote: data.reviewNote ?? null,
+    })
+    .where(and(eq(reconciliationProposals.tenantId, tenantId), eq(reconciliationProposals.id, proposalId)));
 }

@@ -16,6 +16,8 @@ export type {
   InstallmentUpdate,
   Payment,
   PaymentMethod,
+  Proposal,
+  ProposalDecision,
   RegisterManualPaymentInput,
 } from "./domain/types";
 export { selectTarget } from "./domain/select-target";
@@ -32,13 +34,21 @@ export {
   executeReceiptPayment,
   executeReversal,
   listPaymentsByContract,
+  approveReceiptProposal,
 } from "./infra/payment-repository";
-export type { ReceiptPaymentInput, ReceiptPaymentOutcome } from "./infra/payment-repository";
-export { createProposal, markProposalDecision } from "./infra/proposal-repository";
 export type {
-  NewProposal,
-  ProposalDecision,
+  ReceiptPaymentInput,
+  ReceiptPaymentOutcome,
+  ApproveReceiptProposalInput,
+  ApproveReceiptProposalError,
+} from "./infra/payment-repository";
+export {
+  createProposal,
+  markProposalDecision,
+  listProposalsByDecision,
+  getProposalById,
 } from "./infra/proposal-repository";
+export type { NewProposal } from "./infra/proposal-repository";
 export { processReceiptExtraction } from "./application/process-receipt-extraction";
 export type {
   ProcessReceiptExtractionDeps,

@@ -37,7 +37,8 @@ export {
   membershipExists,
   createMembership,
   acceptMembership,
+  listMembershipsForUser,
 } from "./infra/membership-repository";
-export type { ResolvedMembership } from "./infra/membership-repository";
+export type { ResolvedMembership, UserTenantMembership } from "./infra/membership-repository";
 export { createSession, getSessionByTokenHash, deleteSession } from "./infra/session-repository";
 export { createInviteToken, getInviteByTokenHash, deleteInviteToken } from "./infra/invite-repository";

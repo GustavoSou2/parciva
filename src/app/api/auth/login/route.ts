@@ -5,10 +5,16 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { getUserByEmail, createSession, touchLastLogin, login } from "@/modules/identity";
+import {
+  getUserByEmail,
+  createSession,
+  touchLastLogin,
+  login,
+  listMembershipsForUser,
+} from "@/modules/identity";
 import { isErr } from "@/shared/result";
 import { checkRateLimit } from "@/shared/rate-limit";
-import { SESSION_COOKIE_NAME } from "@/shared/session-cookie";
+import { setSessionCookies } from "@/app/_lib/session-cookies";
 
 export const runtime = "nodejs";
 
@@ -51,13 +57,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: result.error }, { status: 401 });
   }
 
-  const response = NextResponse.json({ ok: true }, { status: 200 });
-  response.cookies.set(SESSION_COOKIE_NAME, result.value.sessionToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: result.value.expiresAt,
-  });
+  // Resolve pra quais tenants este usuário pode ir — sem isso o cliente
+  // não tem como saber pra onde redirecionar (ver DECISIONS.md, "login
+  // não sabe pra qual tenant redirecionar"). `getUserDb`/policy
+  // `self_membership_lookup` (0010_membership_self_lookup_rls.sql)
+  // resolvem isso sem bypassar RLS.
+  const tenants = await listMembershipsForUser(result.value.userId);
+
+  const response = NextResponse.json(
+    { ok: true, tenants: tenants.map((t) => ({ slug: t.tenantSlug, name: t.tenantName })) },
+    { status: 200 },
+  );
+  setSessionCookies(response, { token: result.value.sessionToken, expiresAt: result.value.expiresAt });
   return response;
 }

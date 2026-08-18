@@ -4,5 +4,6 @@
  */
 
 import "./receipt-worker";
+import { logger } from "@/shared/logger";
 
-console.log("Worker iniciado, aguardando jobs...");
+logger.info("worker iniciado, aguardando jobs");

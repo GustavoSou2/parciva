@@ -23,10 +23,13 @@ import { Worker, type Job } from "bullmq";
 import type { TenantContext } from "@/db/client";
 import {
   computeHash,
+  computePerceptualHash,
   createReceipt,
   extractFromText,
   extractTextFromImage,
+  findNearDuplicateByPerceptualHash,
   ingestReceipt,
+  PHASH_NEAR_DUPLICATE_MAX_DISTANCE,
   receiptExistsByHash,
   saveExtraction,
   updateReceiptStatus,
@@ -45,6 +48,7 @@ import {
 import { getAutoApprovalCeilingCents } from "@/modules/tenant";
 import { saveReceiptFile } from "@/shared/storage";
 import { isErr } from "@/shared/result";
+import { logger } from "@/shared/logger";
 import { RECEIPT_QUEUE, type ReceiptJobData } from "./queues";
 
 function redisUrl(): string {
@@ -70,6 +74,8 @@ function extFromMime(mimeType: string): string {
 function buildDeps(ctx: TenantContext): IngestDeps {
   return {
     checkDuplicate: (hash) => receiptExistsByHash(ctx, hash),
+    checkNearDuplicate: (hash) =>
+      findNearDuplicateByPerceptualHash(ctx, hash, PHASH_NEAR_DUPLICATE_MAX_DISTANCE),
     runDeterministicExtraction: extractFromText,
     runOcrExtraction: extractTextFromImage,
   };
@@ -104,7 +110,7 @@ const REJECTED_STATUS_BY_ERROR: Partial<Record<string, "rejected" | "failed">> =
  */
 async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
   const { tenantId, receiptId, mimeType, buffer, source, receivedAt, fromPhone } = job.data;
-  console.log("[receipt-worker] processando job", { tenantId, receiptId, mimeType });
+  logger.info("processando job", { tenantId, receiptId, mimeType });
 
   const bufferBytes = Buffer.from(buffer, "base64");
   const raw: RawReceipt = {
@@ -123,13 +129,29 @@ async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
     // Corpo já existe em `receipts` (dedupe por content_hash) — inclusive
     // o caso de retry do BullMQ após falha depois de já ter persistido:
     // o próximo checkDuplicate acha a linha e cai aqui, sem duplicar nada.
-    console.log("[receipt-worker] comprovante duplicado, ignorando", { receiptId });
+    logger.info("comprovante duplicado, ignorando", { receiptId });
     return;
   }
 
   // Original preservado para perícia (spec §8) — nunca o buffer normalizado.
   const contentHash = computeHash(bufferBytes);
   const storageKey = await saveReceiptFile(tenantId, contentHash, extFromMime(mimeType), bufferBytes);
+
+  // Só para imagem (mesmo escopo do check de quase-duplicata em
+  // ingest-receipt.ts) — PDF de texto não tem essa classe de reenvio.
+  // Recomputado aqui (não reaproveitado de `ingestReceipt`) para manter
+  // este arquivo o único ponto que decide o que grava em `receipts` —
+  // mesmo padrão já usado para `contentHash` acima. Falha não deve
+  // impedir a gravação do comprovante.
+  let perceptualHash: string | undefined;
+  if (mimeType.startsWith("image/")) {
+    try {
+      perceptualHash = await computePerceptualHash(bufferBytes);
+    } catch {
+      perceptualHash = undefined;
+    }
+  }
+
   await createReceipt(ctx, {
     id: receiptId,
     source,
@@ -137,37 +159,26 @@ async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
     mimeType,
     sizeBytes: bufferBytes.length,
     contentHash,
+    ...(perceptualHash ? { perceptualHash } : {}),
     receivedAt: new Date(receivedAt),
   });
 
   if (isErr(result)) {
-    console.error("[receipt-worker] ingestReceipt retornou erro", {
-      receiptId,
-      error: result.error,
-    });
+    logger.error("ingestReceipt retornou erro", { receiptId, error: result.error });
     await updateReceiptStatus(ctx, receiptId, REJECTED_STATUS_BY_ERROR[result.error] ?? "failed");
     return;
   }
 
-  console.log("[receipt-worker] ingestReceipt concluído", {
+  logger.info("ingestReceipt concluído", {
     receiptId,
     confidence: result.value.confidence,
+    method: result.value.method,
+    amount_cents: result.value.amount_cents,
+    paid_at: result.value.paid_at,
+    transaction_ref: result.value.transaction_ref,
+    payer_name: result.value.payer_name,
+    institution: result.value.institution,
   });
-  console.log(
-    "[receipt-worker] campos extraídos:",
-    JSON.stringify(
-      {
-        method: result.value.method,
-        amount_cents: result.value.amount_cents,
-        paid_at: result.value.paid_at,
-        transaction_ref: result.value.transaction_ref,
-        payer_name: result.value.payer_name,
-        institution: result.value.institution,
-      },
-      null,
-      2,
-    ),
-  );
 
   const isImage = mimeType.startsWith("image/");
   const tier: ExtractionTier = isImage ? "ocr" : "deterministic";
@@ -184,10 +195,7 @@ async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
     { receiptId, extraction: result.value, ...(fromPhone ? { fromPhone } : {}) },
     buildReconciliationDeps(ctx),
   );
-  console.log("[receipt-worker] processReceiptExtraction concluído", {
-    receiptId,
-    outcome: reconciliationOutcome,
-  });
+  logger.info("processReceiptExtraction concluído", { receiptId, outcome: reconciliationOutcome });
   await updateReceiptStatus(ctx, receiptId, reconciliationOutcome === "applied" ? "applied" : "review");
 }
 
@@ -197,18 +205,18 @@ export const receiptWorker = new Worker<ReceiptJobData>(RECEIPT_QUEUE, processRe
 });
 
 receiptWorker.on("error", (err) => {
-  console.error("Worker erro:", err);
+  logger.error("worker erro", { error: err });
 });
 receiptWorker.on("ready", () => {
-  console.log("Worker conectado ao Redis e pronto");
+  logger.info("worker conectado ao Redis e pronto");
 });
 receiptWorker.on("active", (job) => {
-  console.log("Worker processando job:", job.id);
+  logger.info("worker processando job", { jobId: job.id });
 });
 
 /** Desligamento gracioso — C-31: reinício de servidor não pode deixar job preso em `processing`. */
 async function shutdown(signal: string): Promise<void> {
-  console.log(`[receipt-worker] recebido ${signal}, encerrando graciosamente...`);
+  logger.info("recebido sinal, encerrando graciosamente", { signal });
   await receiptWorker.close();
   process.exit(0);
 }

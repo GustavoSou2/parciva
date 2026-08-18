@@ -14,6 +14,7 @@ import { eq } from "drizzle-orm";
 import { getRootDb, type TenantContext } from "@/db/client";
 import { plans, tenants } from "@/db/schema/tenancy";
 import { money, type Money } from "@/shared/money";
+import { logger } from "@/shared/logger";
 import type { PlanLimits } from "@/modules/billing";
 import { createMembership, createUser, type MembershipRole } from "@/modules/identity";
 import type { NewTenant, NewUser } from "../application/create-tenant";
@@ -83,6 +84,6 @@ export function sendWelcomeEmail(email: string, name: string): Promise<void> {
   // Sem provedor de e-mail configurado no projeto ainda (mesma situação
   // do convite, ver identity/application/invite-user.ts) — loga em vez
   // de enviar, pronto pra plugar um provedor depois.
-  console.log(`[tenant] e-mail de boas-vindas (stub, não enviado de verdade) para ${name} <${email}>`);
+  logger.info("e-mail de boas-vindas (stub, não enviado de verdade)", { name, email });
   return Promise.resolve();
 }

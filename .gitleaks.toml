@@ -1,0 +1,26 @@
+# Config do gitleaks (decisão [12]/[18] — DECISIONS.md) — `pnpm secrets:scan`
+# roda em modo filesystem (`--no-git`), que NÃO respeita .gitignore
+# sozinho. Sem isso, o scan varre `node_modules`/`.next` inteiros —
+# lento e fonte de falso positivo em dependência de terceiro, não no
+# código deste projeto.
+title = "parciva gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Diretórios gerados/dependências de terceiro — não é código deste projeto"
+paths = [
+  '''node_modules/.*''',
+  '''\.next/.*''',
+  '''pnpm-lock\.yaml''',
+  '''storage/.*''',
+]
+
+[[allowlists]]
+description = "`.env`/variantes locais são gitignored de propósito (invariante 7) — o scan filesystem (--no-git) não respeita .gitignore sozinho, então sem isso o segredo local de dev sempre 'vaza' pro próprio dev, mascarando um achado real em source versionado."
+paths = [
+  '''(^|/)\.env$''',
+  '''(^|/)\.env\.local$''',
+  '''(^|/)\.env\..*\.local$''',
+]

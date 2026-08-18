@@ -105,11 +105,15 @@ export const ledgerDirectionEnum = pgEnum("ledger_direction", ["debit", "credit"
 
 export const ledgerActorTypeEnum = pgEnum("ledger_actor_type", ["system", "user", "api"]);
 
-// Marco 4 do roadmap — spec §5.3/§6.6.
+// Marco 4 do roadmap — spec §5.3/§6.6. `reviewed_approved` (Marco 5) é
+// distinto de `auto_applied`: o motor decide sozinho no primeiro, um
+// humano decide na fila de revisão no segundo — a trilha de auditoria
+// (spec §5.3, "log de toda decisão") precisa dizer quem decidiu.
 export const reconciliationDecisionEnum = pgEnum("reconciliation_decision", [
   "auto_applied",
   "needs_review",
   "rejected",
+  "reviewed_approved",
 ]);
 
 export const payers = pgTable(

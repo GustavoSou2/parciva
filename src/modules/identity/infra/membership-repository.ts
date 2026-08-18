@@ -13,13 +13,45 @@
  */
 
 import { and, eq, isNotNull } from "drizzle-orm";
-import { getDb, getRootDb, type TenantContext } from "@/db/client";
+import { getDb, getRootDb, getUserDb, type TenantContext } from "@/db/client";
 import { memberships, tenants } from "@/db/schema/tenancy";
 import type { MembershipRole } from "../domain/types";
 
 export interface ResolvedMembership {
   readonly tenantId: string;
   readonly role: MembershipRole;
+}
+
+export interface UserTenantMembership {
+  readonly tenantId: string;
+  readonly tenantSlug: string;
+  readonly tenantName: string;
+  readonly role: MembershipRole;
+}
+
+/**
+ * "A quais tenants este usuário pertence" — usado pelo login pra saber
+ * pra onde redirecionar, sem o usuário precisar digitar o slug de cor.
+ * Via `getUserDb` (policy `self_membership_lookup`,
+ * `0010_membership_self_lookup_rls.sql`), nunca `getRootDb()`
+ * (bloquearia tudo, RLS ainda ativa) nem `getAdminDb()` (bypass é
+ * exclusivo do painel de superadmin, escopo errado aqui). `tenants` é
+ * join direto porque é tabela raiz, sem RLS — sempre visível.
+ */
+export async function listMembershipsForUser(userId: string): Promise<UserTenantMembership[]> {
+  const rows = await getUserDb(userId, (db) =>
+    db
+      .select({
+        tenantId: memberships.tenantId,
+        role: memberships.role,
+        tenantSlug: tenants.slug,
+        tenantName: tenants.name,
+      })
+      .from(memberships)
+      .innerJoin(tenants, eq(memberships.tenantId, tenants.id))
+      .where(and(eq(memberships.userId, userId), isNotNull(memberships.acceptedAt))),
+  );
+  return rows;
 }
 
 export async function getMembership(
