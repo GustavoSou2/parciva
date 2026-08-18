@@ -318,6 +318,42 @@ Sequência acordada para fechar o débito das Fases 0–3 sem produção/deploy
 roadmap) e sem corpus de comprovantes reais (Fase 2 fica sem a métrica
 formal de acurácia por enquanto):
 
+### Por que os Marcos 3, 4 e 5 foram necessários
+
+Os Marcos 1 (motor de alocação) e 2 (autenticação) entregaram peças
+corretas, mas isoladas — provadas só por teste automatizado ou script
+manual, sem nenhum jeito de uma pessoa de verdade usar o produto.
+
+- **Marco 3 existiu porque sem UI o motor era invisível.** A spec pede
+  explicitamente que a Fase 1 (contratos/pagadores/motor, sem IA, sem
+  WhatsApp) já seja "um produto usável, que substitui a planilha" —
+  isso pressupõe alguém clicando em tela, não só `curl`/teste. Sem o
+  Marco 3, não havia como criar um pagador ou registrar um pagamento
+  fora de um script.
+- **Marco 4 existiu porque ingestão e motor eram dois sistemas
+  desconectados.** O comprovante chegava pelo WhatsApp, era extraído,
+  e o resultado morria em `receipts.status` sem nunca virar um
+  pagamento real nem cair numa fila de revisão de verdade — o
+  `origin=receipt` do motor de alocação nunca tinha sido exercitado.
+  Sem o Marco 4, o canal WhatsApp era uma forma cara de "ler" um
+  comprovante sem fazer nada útil com o que foi lido; o produto inteiro
+  (reconciliação automática, a proposta central do Parciva) não existia
+  de ponta a ponta.
+- **Marco 5 existe porque a extração hoje só cobre 2 dos 6 tiers da
+  cascata de custo da spec (§7.1)** — determinístico (Tier 1) e OCR
+  local (Tier 2). Todo comprovante que essas duas etapas não resolvem
+  cai direto em revisão humana, porque não há VLM plugado no worker:
+  na prática isso significa que a maior parte do volume real (foto
+  borrada, layout de banco não previsto, PDF digitalizado sem camada de
+  texto) nunca seria automatizada — o oposto do objetivo da cascata,
+  que é "a maioria do comprovante nunca chega a um LLM" só depois de
+  esgotar as etapas baratas. Também não existe UI de fila de revisão
+  (a única forma de ver o que caiu em `needs_review` hoje é consultar o
+  banco direto) nem um segundo provedor de VLM com fallback — o único
+  provedor hoje (`infra/anthropic-vlm.ts`) está hardcoded, sem a
+  interface plugável que a própria spec exige (§7.3, "arquitetura
+  anti-lock-in") — um único ponto de falha de custo/disponibilidade.
+
 1. ~~**Marco 1 — Motor de alocação + ledger**~~ — **concluído 18/08/2026.**
 2. ~~**Marco 2 — Autenticação e sessão**~~ — **concluído 18/08/2026.**
    Login, sessão, convite, RBAC, rate limit, CSRF — verificado via HTTP
@@ -335,9 +371,58 @@ formal de acurácia por enquanto):
    `extractPaidAt` corrigido. Verificado ponta a ponta contra fila +
    worker + Postgres reais (telefone bate pagador + valor exato de
    parcela → auto-aplicado; telefone desconhecido → revisão).
-5. **Marco 5 — Resto da Fase 2 (sem corpus)** — Tier 0 real, Tier 1 (PDF
-   com camada de texto), tela de fila de revisão, segundo provedor de
-   VLM (a decidir com o usuário). **Próximo passo.**
+5. **Marco 5 — Resto da Fase 2 (sem corpus)** — **próximo passo, ainda
+   sem plano de execução aprovado.** Fecha o DoD da Fase 2 que não
+   depende de corpus real (métrica formal de acurácia por campo fica
+   de fora — exigiria comprovante real, banido pelo roadmap). Entregas
+   previstas, na ordem em que a spec (§7.1/§14 Fase 2) as descreve:
+   - **Tier 0 — cache por hash.** `receipts.perceptual_hash` existe no
+     schema desde a fundação mas nunca foi computado. Precisa de: (a)
+     `computeHash` (já existe, `content_hash`/SHA-256) virar um check
+     de cache-hit ANTES de gastar qualquer tier pago — hoje só serve
+     pra dedupe/idempotência, não pra reaproveitar uma extração já
+     feita; (b) calcular `perceptual_hash` (pHash) na normalização de
+     imagem (`domain/normalizer.ts`) pra pegar reenvio com recorte/
+     recompressão (C-02), não só bytes idênticos.
+   - **Tier 1 — PDF com camada de texto real.** Hoje `ingest-receipt.ts`
+     decodifica o buffer de PDF como texto bruto (`buffer.toString
+     ("utf-8")`) — funciona por acidente em PDF não comprimido, falha
+     silenciosamente (texto vazio/lixo) em qualquer PDF gerado por banco
+     de verdade. Precisa de um parser real de camada de texto (ex.:
+     `pdfjs-dist`, equivalente Node do `pdfplumber` da spec) antes do
+     regex determinístico rodar sobre PDF.
+   - **Tier 3 — segundo provedor de VLM + fallback.** `infra/
+     anthropic-vlm.ts` é hoje uma chamada hardcoded a um único provedor,
+     sem a interface `ExtractionProvider` que a spec pede (§7.3) para
+     trocar de provedor "por variável de ambiente, não refactor"; e o
+     worker não chama nenhum VLM em produção (`receipt-worker.ts` só
+     roda determinístico + OCR). Este marco precisa: (a) desenhar essa
+     interface; (b) escolher e plugar um segundo provedor — **decisão a
+     tomar com o usuário**, com o mesmo requisito duro da spec (opt-out
+     de treinamento, retenção zero/curta — não é só custo/qualidade);
+     (c) ligar o VLM no worker de verdade, com fallback em cascata
+     (Tier 3 → Tier 4 só se confiança baixa ou valor acima do teto,
+     `VLM_CONFIDENCE_THRESHOLD` já existe em `ingest-receipt.ts`).
+   - **Registro de custo por extração.** `receipt_extractions.
+     cost_micros`/`provider`/`model`/`latency_ms` já existem no schema e
+     em `NewReceiptExtraction` (`infra/receipt-repository.ts`), mas o
+     worker não preenche nenhum deles hoje — fica pronto pra usar assim
+     que o VLM estiver plugado (item acima).
+   - **Tela de fila de revisão** (`/t/<slug>/review` ou nome a definir)
+     — comprovante × proposta lado a lado (spec: "comprovante ×
+     proposta"), aprovar/rejeitar. A infra já existe e está ociosa desde
+     o Marco 4: `reconciliation_proposals.reviewed_by/reviewed_at/
+     review_note` e `markProposalDecision` (`reconciliation/infra/
+     proposal-repository.ts`) foram construídos no Marco 4 mas nenhuma
+     UI os chama ainda — hoje a única forma de ver o que caiu em
+     `needs_review` é consultar o banco direto.
+   - **Fora do Marco 5, deliberadamente:** Tier 1.5 (QR Code/BR Code
+     EMV no comprovante — a spec lista como "variável", não crítico
+     pro caminho principal); corpus de ≥200 comprovantes reais com
+     gabarito e a métrica formal de acurácia por campo (exigem
+     documento financeiro real de terceiro, banido do roadmap desde o
+     início); orçamento por tenant/circuit breaker de custo (§7.5 —
+     depende de billing real, que é dívida de Fase 4 separada).
 6. **Marco 6 — Débitos cruzados** — estender `tenant-isolation.test.ts`
    às 13 tabelas de domínio originais (RLS estava inativa em dev sem
    ninguém saber — DECISIONS.md [13] — então isso é mais urgente do que
