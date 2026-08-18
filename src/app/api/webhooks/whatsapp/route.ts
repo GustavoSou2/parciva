@@ -24,6 +24,7 @@ import {
   resolveTenantByPhoneNumberId,
   type HandleInboundDeps,
 } from "@/modules/whatsapp";
+import { checkQuota, getCurrentUsage, getLimits } from "@/modules/billing";
 import { getReceiptQueue } from "@/workers/queues";
 import { REPLY_DUPLICATE } from "./replies";
 
@@ -71,8 +72,25 @@ async function downloadMedia(url: string, authToken: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
+/**
+ * Pré-filtro de cota (spec §11.3, "checado em dois pontos: no enqueue
+ * e no worker") — só consulta, NUNCA incrementa. O incremento de
+ * verdade é `enforceQuota()` no worker (`receipt-worker.ts`), no
+ * momento em que o comprovante realmente vai ser processado; chamar
+ * `enforceQuota()` aqui TAMBÉM contaria a mesma mensagem duas vezes
+ * contra a cota mensal. Isto aqui só evita enfileirar um job que o
+ * worker já sabe que vai rejeitar.
+ */
 async function enqueueReceipt(tenantId: string, raw: RawReceipt): Promise<void> {
   const receiptId = randomUUID();
+
+  const limits = await getLimits(tenantId);
+  const usage = await getCurrentUsage(tenantId, "receipts_per_month");
+  if (!checkQuota("receipts_per_month", usage, limits).allowed) {
+    logger.warn("cota de comprovantes/mês excedida — não enfileirado", { tenantId, receiptId });
+    return;
+  }
+
   logger.debug("enqueueReceipt chamado", { tenantId, receiptId, mimeType: raw.mimeType });
   await getReceiptQueue().add("process-receipt", {
     tenantId,

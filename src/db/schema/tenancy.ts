@@ -45,6 +45,12 @@ export const tenants = pgTable("tenants", {
   planId: uuid("plan_id").references(() => plans.id),
   timezone: text("timezone").notNull().default("America/Sao_Paulo"),
   settings: jsonb("settings").notNull().default({}),
+  // Id do CLIENTE na AbacatePay (Parciva cobrando o TENANT pela própria
+  // assinatura do SaaS) — nunca confundir com `psp_connections` (Modelo
+  // B, invariante 8/9: cobrança dos PAGADORES de um tenant, na conta do
+  // PSP do próprio tenant). Isto aqui é receita do Parciva, não custódia
+  // de terceiro.
+  billingCustomerRef: text("billing_customer_ref"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   suspendedAt: timestamp("suspended_at", { withTimezone: true }),
@@ -133,6 +139,13 @@ export const plans = pgTable("plans", {
   limits: jsonb("limits").notNull().default({}),
   features: jsonb("features").notNull().default({}),
   isPublic: boolean("is_public").notNull().default(true),
+  // Id do "produto" correspondente na AbacatePay — `checkouts/create`
+  // (v2) exige um produto pré-cadastrado (`items: [{id, quantity}]`),
+  // diferente do `/billing/create` v1 (produto inline, não usado aqui —
+  // essa chave de API é v2, achado confirmado empiricamente contra o
+  // ambiente de dev). Nulo pra `free`/`scale` — só planos cobrados
+  // automaticamente (essential/professional) precisam.
+  abacatePayProductId: text("abacate_pay_product_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   codeUnique: uniqueIndex("plans_code_unique").on(t.code),

@@ -65,7 +65,7 @@ export async function listTenantSummaries(): Promise<TenantSummary[]> {
   const db = getAdminDb();
   const monthStart = startOfMonthUtc();
 
-  const [rows, receiptCounts] = await Promise.all([
+  const [rows, receiptCounts, aiCosts] = await Promise.all([
     db
       .select({
         id: tenants.id,
@@ -83,9 +83,18 @@ export async function listTenantSummaries(): Promise<TenantSummary[]> {
       .from(receipts)
       .where(gte(receipts.receivedAt, monthStart))
       .groupBy(receipts.tenantId),
+    // `receipt_extractions.tenant_id` é coluna direta — sem join. Vai
+    // mostrar R$ 0,00 pra todo mundo enquanto nenhum tier de VLM
+    // estiver ligado (decisão [18]); é o valor real, não placeholder.
+    db
+      .select({ tenantId: receiptExtractions.tenantId, value: sql<string | null>`sum(${receiptExtractions.costMicros})` })
+      .from(receiptExtractions)
+      .where(gte(receiptExtractions.createdAt, monthStart))
+      .groupBy(receiptExtractions.tenantId),
   ]);
 
   const receiptsByTenant = new Map(receiptCounts.map((r) => [r.tenantId, r.value]));
+  const aiCostByTenant = new Map(aiCosts.map((r) => [r.tenantId, r.value ? microsToCents(Number(r.value)) : ZERO]));
 
   return rows.map((row) => ({
     id: row.id,
@@ -94,6 +103,7 @@ export async function listTenantSummaries(): Promise<TenantSummary[]> {
     status: row.status,
     planCode: row.planCode ?? "—",
     receiptsThisMonth: receiptsByTenant.get(row.id) ?? 0,
+    aiCostThisMonthCents: aiCostByTenant.get(row.id) ?? ZERO,
     createdAt: row.createdAt,
   }));
 }

@@ -68,8 +68,25 @@ colisão de rota com `/` some), e as duas páginas existentes
 resto da spec §12 (subdomínio, MFA, quebra-vidro, impersonação,
 feature flags, DLQ, ações) segue pendente, por decisão do usuário.
 
-A camada SaaS (billing) segue como fatia parcial de domínio, sem
-conexão a banco.
+**Fase 4 parcial — cota real, custo de IA por tenant, cobrança via
+AbacatePay concluída em 18/08/2026** (DECISIONS.md [25]): `enforceQuota`
+agora roda de verdade no webhook/worker de comprovante (rejeita sem
+processar quando `receipts_per_month` é excedido); painel de admin
+mostra custo de IA real por tenant (R$0,00 enquanto VLM continuar fora
+do roadmap, decisão [18]); `essential`/`professional` têm assinatura
+PIX real via AbacatePay (webhook, `/t/<slug>/account`), verificado ao
+vivo contra a API de dev. `free`/`scale` continuam fora do checkout
+automático, por decisão do usuário.
+
+**Cron de renovação de assinatura concluído em 18/08/2026**
+(DECISIONS.md [26]): fecha a pendência que a decisão [25] deixou
+registrada — sem ele, "assinar" funcionava mas nada renovava sozinho.
+Job BullMQ diário reaproveita `subscribeTenant` para gerar a cobrança
+do próximo ciclo (ou finaliza cancelamento, se `cancel_at` já passou),
+com duas guardas independentes contra reencaminhar a mesma cobrança em
+dias seguintes. Verificado ao vivo contra o tenant de teste da decisão
+[25]. UI de faturas e dunning após `past_due` prolongado seguem
+pendentes (ver "Pendências conhecidas").
 
 ## O que está funcionando agora
 
@@ -188,6 +205,32 @@ Redis do `docker-compose.yml`, sem mock):
   arquivo (`/t/<slug>/receipts/<id>/file`) não foram clicadas num
   navegador de verdade nesta verificação — só a lógica de aplicação
   server-side foi exercitada contra Postgres real.
+- **Cobrança via AbacatePay** (`billing`, Fase 4 parcial, DECISIONS.md
+  [25]): `subscribeTenant` chamado contra a API de dev real duas vezes
+  no mesmo tenant (essential, depois professional) — produto criado e
+  persistido em `plans.abacate_pay_product_id` nas duas vezes, cliente
+  AbacatePay criado só na primeira e reaproveitado na segunda
+  (`tenants.billing_customer_ref` inalterado). Webhook
+  `api/webhooks/abacatepay` testado com payload `checkout.completed`
+  assinado com HMAC real contra um segredo de teste: tenant
+  `trial→active`, `subscriptions` criada com `provider_ref`/período
+  corretos. Também testado: assinatura inválida (400), segredo não
+  configurado (500), evento fora do mapa (200 `ignored_event`),
+  metadata ausente e tenant inexistente (500 nos dois).
+  `/t/<slug>/account` renderizado via `next dev` real (signup → conta
+  nova → planos com preço do banco → formulário de telefone/CPF-CNPJ
+  só na primeira assinatura). Segredo real do webhook (painel da
+  AbacatePay) e round-trip HTTP fim-a-fim contra tráfego real da
+  AbacatePay continuam pendentes — dependem de um passo manual do
+  usuário (ver "Pendências conhecidas").
+- **Cron de renovação** (`billing/application/renew-subscriptions.ts`,
+  DECISIONS.md [26]): forcei `current_period_end` do tenant de teste
+  acima para o passado e rodei o job real (não mock) — gerou cobrança
+  nova na AbacatePay (dev), tenant e `subscriptions` foram para
+  `past_due` nos dois. Rodei de novo sem mudar nada: `skipped`, nenhuma
+  chamada nova à AbacatePay (as duas guardas seguraram — nunca cobra
+  duplicado). Com `cancel_at` no passado: tenant e `subscriptions`
+  foram para `cancelled`, sem nenhuma cobrança criada.
 
 ## Fases concluídas
 
@@ -217,14 +260,23 @@ que por fase:
   com gabarito e a métrica formal de acurácia por campo — exigem documento
   financeiro real de terceiro, banido do roadmap desde o início; e Tier 3
   (VLM), fora de escopo por ora (DECISIONS.md [18]).
-- **Fatia de camada SaaS (equivalente a parte da Fase 4):** `billing`
-  (regras de cota) segue sem conexão a banco. `admin` ganhou conexão
-  real em 18/08/2026 (`src/app/admin/_lib/queries.ts`, DECISIONS.md
-  [24]) — dashboard e lista de tenants, escopo mínimo, sem
-  quebra-vidro/MFA/subdomínio. `identity`/`tenant` deixaram de ser só
-  domínio puro — Marco 2 deu infra real e onboarding self-service
-  funciona (signup → tenant + owner + login). Falta faturamento real
-  (gateway) e quebra-vidro auditado no painel de superadmin.
+- **Fatia de camada SaaS (equivalente a parte da Fase 4) — cota real
+  e faturamento via AbacatePay em 18/08/2026 (DECISIONS.md [25]):**
+  `billing/infra/usage-repository.ts` liga `enforceQuota` de verdade ao
+  webhook/worker de comprovante; `billing/infra/abacatepay-client.ts` +
+  `application/{subscribe-tenant,handle-billing-webhook,cancel-
+  subscription}.ts` dão assinatura PIX real (`essential`/
+  `professional`) via `/t/<slug>/account` e `api/webhooks/abacatepay`.
+  `billing/application/renew-subscriptions.ts` (DECISIONS.md [26],
+  job BullMQ diário) gera a cobrança do próximo ciclo sozinho ou
+  finaliza o cancelamento, reaproveitando `subscribeTenant`. `admin`
+  ganhou conexão real em 18/08/2026 (`src/app/admin/_lib/queries.ts`,
+  DECISIONS.md [24]) — dashboard, lista de tenants e custo de IA por
+  tenant, escopo mínimo, sem quebra-vidro/MFA/subdomínio.
+  `identity`/`tenant` deixaram de ser só domínio puro — Marco 2 deu
+  infra real e onboarding self-service funciona (signup → tenant +
+  owner + login). Falta UI de faturas, dunning após `past_due`
+  prolongado e quebra-vidro auditado no painel de superadmin.
 - **Autenticação — Marco 2 do roadmap, concluído em 18/08/2026:** login
   e-mail/senha (Argon2id via `@node-rs/argon2`), sessão em Postgres
   (`sessions`, não JWT — revogável), convite de usuário (`invite_
@@ -581,6 +633,34 @@ mexer no modelo de RLS (DECISIONS.md [23] — segunda policy em
   [22]) como `TRUNCATE ... CASCADE` em todas as tabelas de `public`,
   com guarda contra rodar fora de `localhost`. Testado de verdade
   contra o Postgres de dev.
+- **AbacatePay — segredo real do webhook pendente** (DECISIONS.md
+  [25]): `ABACATE_PAY_WEBHOOK_SECRET` segue vazio em `.env`/
+  `.env.example`. Depende de um passo manual do usuário: criar o
+  webhook no painel da AbacatePay (ambiente dev) apontando para um
+  túnel ngrok (`NGROK_AUTH_TOKEN` já está no `.env`) e informar o
+  segredo gerado. Sem isso, a verificação de assinatura e a lógica de
+  transição foram testadas com um segredo fake e payload sintético
+  assinado manualmente — não o round-trip HTTP real vindo da
+  AbacatePay.
+- **Renovação automática — implementada (DECISIONS.md [26]), dunning
+  prolongado ainda não.** O cron gera a cobrança do próximo ciclo e
+  marca o tenant `past_due`, mas nada escala `past_due` para
+  `suspended` depois de N dias sem pagar — hoje um tenant pode ficar
+  `past_due` indefinidamente. Decisão de produto pendente (quantos dias
+  de tolerância?), não implementada por não ter sido pedida nesta
+  tarefa. Detectar cobrança expirada sem esperar o próximo ciclo via
+  webhook (`GET /billing/list` ou equivalente) também segue sem
+  confirmação empírica.
+- **`createProduct` não é idempotente contra "produto já existe" na
+  AbacatePay** — achado durante a verificação da Fase 4 parcial
+  (DECISIONS.md [25]): se uma tentativa anterior criar o produto na
+  AbacatePay mas falhar antes de persistir `plans.abacate_pay_
+  product_id`, toda assinatura futura desse plano fica bloqueada até
+  correção manual da coluna. Não corrigido — fora do escopo combinado
+  com o usuário para esta tarefa.
+- **Sem UI de faturas/histórico de cobrança** na tela `/t/<slug>/
+  account` — mostra só plano atual/ciclo/cancelamento agendado, não a
+  lista de cobranças passadas.
 - **Fora de escopo do Marco 4, deliberadamente:** item 4 do §6.3
   (referência externa tipo "CTR-00432" na mensagem do PIX —
   `ExtractionOutput` não tem esse campo, adicioná-lo mudaria o contrato

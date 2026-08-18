@@ -1,0 +1,1 @@
+ALTER TABLE "plans" ADD COLUMN "abacate_pay_product_id" text;

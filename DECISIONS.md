@@ -1141,3 +1141,227 @@ cliente real (sem MFA, sem subdomínio, sem quebra-vidro) — isso
 precisa ser resolvido antes de operar mais de um tenant de fato, mas
 essa decisão já estava registrada antes desta tarefa (spec §12) e
 continua sendo dívida conhecida, não nova.
+
+---
+
+## [25] Fase 4 parcial: cota real, custo de IA por tenant, cobrança via AbacatePay
+
+**Data:** 18/08/2026
+
+**Contexto:** A Fase 4 completa (spec §14) tem 5 entregáveis; três
+dependiam de uma decisão de fornecedor que só o usuário podia tomar
+(gateway de pagamento). Decisão tomada: **AbacatePay**, chave já em
+`.env`. Confirmado também: só `essential` (R$99) e `professional`
+(R$249) têm cobrança automática — `free` nunca cobra, `scale` continua
+negociado manualmente. Reconfirmado, sem mudança: VLM continua
+descartado (decisão [18]) — "custo de IA por tenant" mostra R$0,00
+para todo mundo até esse marco ser retomado, estado esperado, não bug.
+
+**Decisão:**
+- **`enforceQuota()` (existia, nunca era chamado — mesma situação do
+  CSRF antes da decisão [22]) agora roda de verdade.** Novo
+  `billing/infra/usage-repository.ts` (`getLimits`/`getCurrentUsage`/
+  `incrementUsage`, via `getDb(ctx)`, RLS já testada no Marco 6).
+  `enqueueReceipt` (`api/webhooks/whatsapp/route.ts`) faz só
+  pré-checagem (`checkQuota`, nunca incrementa — incrementar aqui
+  também contaria a mesma mensagem duas vezes); `processReceiptJob`
+  (`receipt-worker.ts`) chama `enforceQuota` de verdade antes de
+  qualquer trabalho caro, rejeita sem criar linha em `receipts` se a
+  cota mensal de `receipts_per_month` já foi excedida.
+- **Custo de IA por tenant no painel de admin.** `listTenantSummaries()`
+  (`app/admin/_lib/queries.ts`) ganhou `aiCostThisMonthCents` —
+  `receipt_extractions` agrupado por `tenant_id` (coluna direta, sem
+  join), soma de `cost_micros` do mês, mesma conversão micros→centavos
+  de `getGlobalMetrics()`.
+- **Achado que mudou o desenho da cobrança:** a API da AbacatePay (v2,
+  confirmado empiricamente contra o ambiente de dev — a documentação
+  pública mistura exemplos de v1/v2) não tem assinatura recorrente
+  cobrada automaticamente: `checkouts/create` aceita `methods`/
+  `items`/`customerId`, mas um `frequency: "SUBSCRIPTION"` enviado é
+  silenciosamente ignorado — a resposta sempre volta
+  `"frequency":"ONE_TIME"`. Não é um bloqueio: é o desenho natural para
+  PIX no Brasil — **Parciva** controla o calendário de cobrança
+  (`subscriptions.current_period_start/end`, já no schema desde a
+  fundação), gerando uma cobrança PIX nova por ciclo; a AbacatePay só
+  processa cada cobrança individual. Endpoints confirmados ao vivo
+  contra a chave de dev: `POST /v2/products/create`, `POST
+  /v2/customers/create` (plural — `/customer/create` devolve 400),
+  `POST /v2/checkouts/create`; envelope de resposta
+  `{success, data, error}`.
+- **Schema:** `tenants.billing_customer_ref` (id do cliente na
+  AbacatePay) e `plans.abacate_pay_product_id` (id do produto — este
+  último não estava no plano original, achado durante o teste ao vivo:
+  `checkouts/create` exige um produto pré-cadastrado via `items:
+  [{id, quantity}]`, diferente do `/billing/create` v1 que aceitava
+  produto inline). Nomes deliberadamente distintos de `psp_connections`
+  (Modelo B, invariante 8/9) — isto aqui é o Parciva cobrando o TENANT
+  pela própria assinatura do SaaS, não custódia de terceiro.
+- **`billing/domain/abacatepay-signature.ts`** — HMAC-SHA256 base64 do
+  corpo cru, header `X-Webhook-Signature`, mesmo padrão de
+  `whatsapp/domain/signature.ts` (`node:crypto`, sem SDK, testável sem
+  rede). Confirmado contra a documentação pública que o cabeçalho e o
+  algoritmo são exatamente esses.
+- **`billing/infra/abacatepay-client.ts`** — `fetch` cru (mesmo padrão
+  de `anthropic-vlm.ts`/Twilio, decisão [6]): `createProduct`,
+  `createCustomer`, `createCheckout`. Chave de API troca entre
+  produção/dev via `NODE_ENV` (`ABACATE_PAY_API_KEY`/
+  `ABACATE_PAY_DEV_API_KEY`).
+- **`billing/application/{subscribe-tenant,handle-billing-webhook,
+  cancel-subscription}.ts`** — `subscribeTenant` garante produto (1 por
+  plano, reaproveitado) e cliente (1 por tenant, reaproveitado) antes
+  de criar o checkout do ciclo atual; `handleBillingWebhook` reaproveita
+  `tenant/domain/lifecycle.ts` (`transition`, já testado) para
+  `checkout.completed`→`payment_confirmed`/`checkout.refunded`,
+  `checkout.disputed`→`payment_failed`, nunca decide status por conta
+  própria; `cancelSubscription` agenda `cancel_at = current_period_end`
+  — tenant continua ativo até o fim do ciclo já pago, sem reembolso.
+- **`api/webhooks/abacatepay/route.ts`** devolve status HTTP fiel ao
+  resultado (400 assinatura inválida, 400 JSON malformado, 500 erro de
+  processamento/config ausente, 200 só quando processado ou evento
+  fora do mapa) — ao contrário do webhook do WhatsApp
+  (`api/webhooks/whatsapp/route.ts`), que sempre devolve 200 porque o
+  Twilio reenvia sem ajudar em nenhum caso de erro tratado lá. Aqui o
+  reenvio da AbacatePay em backoff é desejável; o contraste está
+  comentado explicitamente nos dois arquivos para não virar cópia
+  errada depois.
+- **`/t/<slug>/account`** (nova, mínima — spec §13.2 tela 7, só a parte
+  de plano) — plano atual, status do tenant, ciclo/cancelamento
+  agendado se houver assinatura, botões "Assinar" por plano
+  (`billing:write`, RBAC já existia em `identity/domain/types.ts` desde
+  a fundação, nunca checado em rota nenhuma até agora — mesma situação
+  do CSRF antes da decisão [22]) e "Cancelar assinatura". Telefone/CPF-
+  CNPJ do responsável são pedidos só na primeira assinatura (formulário
+  inline, validado contra `shared/document.ts` — nunca duplicar regex
+  de CPF/CNPJ, invariante 10); depois disso `billing_customer_ref` já
+  existe e o cliente é reaproveitado.
+
+**Verificado ao vivo, ponta a ponta:** `subscribeTenant` chamado duas
+vezes contra a API de dev real (não mock) — primeira vez para
+`essential` (cria produto, cria cliente, cria checkout,
+`billing_customer_ref` persistido), segunda para `professional` no
+mesmo tenant (cria produto novo, **reaproveita** o cliente já
+persistido). Webhook testado com payload `checkout.completed`
+assinado com HMAC de verdade contra um segredo de teste (o segredo
+real de produção depende de um passo manual — criar o webhook no
+painel da AbacatePay — fora do alcance desta tarefa): tenant
+`trial→active` de verdade no banco, linha em `subscriptions`
+(`provider: "abacatepay"`, período de 1 mês) criada. Assinatura
+inválida → 400; segredo não configurado → 500; evento fora do mapa
+(`payout.completed`) → 200 `ignored_event`; metadata ausente → 500
+`missing_metadata`; tenant inexistente → 500 `tenant_not_found`.
+Página `/t/<slug>/account` renderizada via `next dev` real
+(signup → conta nova → planos com preço real do banco, formulário de
+telefone/CPF-CNPJ aparecendo só na primeira assinatura).
+
+**Achado durante a verificação, não corrigido (fora de escopo desta
+tarefa):** se `createProduct` for chamado e a AbacatePay responder
+"produto já existe" (`externalId` duplicado) — por exemplo, uma
+tentativa anterior criou o produto na AbacatePay mas falhou antes de
+persistir `plans.abacate_pay_product_id` —, `subscribeTenant` propaga
+o erro e a assinatura desse plano fica permanentemente bloqueada até
+alguém corrigir a coluna manualmente. Isso aconteceu de verdade nesta
+sessão (dado de exploração anterior deixou um produto "essential"
+órfão na AbacatePay) e foi contornado atualizando a coluna direto no
+banco de dev. Corrigir de verdade exigiria a AbacatePay expor uma
+forma de buscar produto por `externalId` (não confirmada empiricamente
+até agora) ou tornar a escrita de `abacate_pay_product_id` atômica com
+a criação do produto — registrado aqui como pendência real, não
+implementado por não estar no escopo combinado com o usuário.
+
+**Alternativas descartadas:** Confiar na documentação pública sem
+testar contra a API de dev real (rejeitado pelo próprio usuário —
+"trabalhe a partir da premissa de que ambos os endpoints são v2", mas
+ainda assim a tarefa testou ao vivo antes de escrever o cliente
+definitivo, mesma disciplina de testar contra Postgres real em vez de
+mockar); cobrar todos os planos automaticamente, incluindo
+`free`/`scale` (rejeitado pelo usuário — só essential/professional).
+
+**Consequências:** Renovação automática por cron (disparar a cobrança
+do próximo ciclo sozinho) e detecção de cobrança expirada sem webhook
+ficam para uma tarefa de acompanhamento — sem isso, "assinar" funciona
+mas nada renova só; ver PROGRESS.md. `ABACATE_PAY_WEBHOOK_SECRET`
+segue vazio em `.env`/`.env.example` até o usuário criar o webhook no
+painel da AbacatePay e informar o segredo gerado.
+
+---
+
+## [26] Cron de renovação de assinatura — reaproveita `subscribeTenant`, duas guardas contra cobrança duplicada
+
+**Data:** 18/08/2026
+
+**Contexto:** Pendência explícita da decisão [25]: `subscribeTenant`/
+webhook funcionam, mas nada dispara a cobrança do próximo ciclo
+sozinho — um tenant assinado ficaria `active` indefinidamente mesmo
+sem pagar de novo.
+
+**Decisão:**
+- **`billing/application/renew-subscriptions.ts`** (`renewDueSubscriptions`,
+  pura, testável sem banco) — enumera tenant por tenant via
+  `tenant/listTenantIds()` (tabela raiz, sem RLS) e, para cada um, lê a
+  assinatura via `getSubscriptionByTenant` (RLS de verdade, `getDb(ctx)`
+  por dentro) — **nunca** um bypass de RLS tipo `getAdminDb()`, que o
+  comentário de `admin-client.ts` já restringe a `src/app/admin/**`.
+  Isolamento por tenant é mantido mesmo dentro de um processo de
+  sistema, não só de rota HTTP — mesmo espírito da decisão [20].
+- Uma assinatura `active` com `current_period_end` vencido cai em dois
+  caminhos: se `cancel_at` já passou, finaliza o cancelamento
+  (`transition(status, "cancel_requested")` + `markSubscriptionCancelled`,
+  nunca cria cobrança nova); senão, gera a cobrança do próximo ciclo
+  reaproveitando **a mesma função** `subscribeTenant` da primeira
+  assinatura (produto/cliente já existem sempre numa renovação — por
+  isso os campos de dono passaram a ser opcionais em
+  `SubscribeTenantInput`, com erro novo `missing_owner_details` se
+  faltarem E o cliente ainda não existir).
+- **Ordem importa:** a cobrança é criada ANTES de qualquer
+  `setTenantStatus`/`markSubscriptionPastDue` — se a chamada à
+  AbacatePay falhar, o tenant continua exatamente como estava, nunca é
+  punido por uma falha nossa (`outcome: "renewal_failed"`, sem mudança
+  de estado).
+- **Duas guardas independentes contra reencaminhar a mesma cobrança em
+  dias seguintes** (mesmo espírito de defesa em profundidade da
+  decisão [1]): (1) a validade da transição `payment_failed` em
+  `tenants.status` — no segundo dia o tenant já está `past_due`, que
+  não tem esse evento no grafo (`lifecycle.ts`); (2)
+  `markSubscriptionPastDue`, que tira a assinatura do filtro
+  `status === "active"` usado para selecionar quem está vencendo.
+  Nenhuma depende da outra.
+- **BullMQ repeatable job**, não um cron de SO — mesma fila/worker já
+  usados para comprovante (`workers/queues.ts`/`workers/billing-
+  renewal-worker.ts`), `jobId` fixo (`"billing-renewal-daily"`) faz o
+  BullMQ deduplicar o agendamento a cada reinício do worker, nunca
+  acumula um segundo cron correndo em paralelo. Diário, 03:00 UTC —
+  cobrança PIX não é cronometrada ao segundo.
+- **Achado ao adicionar o segundo worker, corrigido:** `receipt-
+  worker.ts` e o worker novo tinham, cada um, seu próprio
+  `process.on("SIGTERM", ...) → process.exit(0)` — dois handlers
+  independentes do mesmo sinal correm risco real de um matar o
+  processo antes do outro terminar de fechar sua conexão (C-31).
+  Consolidado em `workers/main.ts`: um único par de handlers que
+  aguarda `Promise.all([receiptWorker.close(), billingRenewalWorker.close()])`
+  antes de `process.exit(0)`.
+
+**Verificado ao vivo, ponta a ponta, contra o tenant de teste da
+decisão [25] (não mock):** forcei `current_period_end` para o passado
+— rodei o job real: gerou cobrança nova na AbacatePay (dev), tenant e
+`subscriptions` foram para `past_due` nos dois. Rodei o job de novo
+sem mudar nada: `outcome: "skipped"`, nenhuma chamada nova à
+AbacatePay (as duas guardas seguraram). Depois, com `cancel_at` no
+passado: tenant e `subscriptions` foram para `cancelled`, sem nenhuma
+cobrança criada.
+
+**Alternativas descartadas:** `getAdminDb()` pra enumerar assinaturas
+de todo tenant de uma vez, sem loop (rejeitado — bypass de RLS restrito
+ao painel de admin por design, decisão [20]; um processo de sistema não
+é motivo para abrir essa exceção); coluna nova pra marcar "cobrança
+pendente deste ciclo" (rejeitado — as duas guardas já existentes
+resolvem sem estado novo, mesmo raciocínio de `subscriptions.cancel_at`
+já bastar para o cancelamento sem coluna extra).
+
+**Consequências:** "Assinar" agora realmente sustenta cobrança
+recorrente sem intervenção manual — o que faltava desde a decisão [25].
+Ainda pendente, fora do escopo desta tarefa: dunning depois de
+`past_due` prolongado (hoje o tenant fica `past_due` indefinidamente
+até pagar, nunca escala pra `suspended` sozinho) e detectar cobrança
+expirada sem esperar o próximo ciclo via webhook — ambos exigiriam
+decisão de produto (quantos dias de tolerância?) que não foi pedida
+nesta tarefa.

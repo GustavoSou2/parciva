@@ -48,3 +48,41 @@ export function getReceiptQueue(): Queue<ReceiptJobData> {
   }
   return receiptQueue;
 }
+
+/** Cron de renovação de assinatura (spec §14 Fase 4, decisão [25]) — sem payload, só dispara o cron. */
+export const BILLING_RENEWAL_QUEUE = "billing-renewal";
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- job sem payload, ver comentário acima
+export interface BillingRenewalJobData {}
+
+let billingRenewalQueue: Queue<BillingRenewalJobData> | undefined;
+
+export function getBillingRenewalQueue(): Queue<BillingRenewalJobData> {
+  if (!billingRenewalQueue) {
+    billingRenewalQueue = new Queue<BillingRenewalJobData>(BILLING_RENEWAL_QUEUE, {
+      connection: { url: redisUrl(), maxRetriesPerRequest: null },
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: "exponential", delay: 5000 },
+        removeOnComplete: 30,
+        removeOnFail: 100,
+      },
+    });
+  }
+  return billingRenewalQueue;
+}
+
+/**
+ * Repetível diário — `jobId` fixo faz o BullMQ deduplicar pelo mesmo
+ * agendamento em toda reinicialização do worker, nunca acumula um
+ * segundo cron correndo em paralelo. 03:00 UTC (madrugada em qualquer
+ * fuso do Brasil) — sem urgência de minuto exato, cobrança PIX não é
+ * cronometrada ao segundo.
+ */
+export async function scheduleBillingRenewalJob(): Promise<void> {
+  await getBillingRenewalQueue().add(
+    "run",
+    {},
+    { repeat: { pattern: "0 3 * * *" }, jobId: "billing-renewal-daily" },
+  );
+}

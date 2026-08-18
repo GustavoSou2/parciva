@@ -1,4 +1,5 @@
 import { Card } from "@/ui/components/Card";
+import { Money } from "@/ui/components/Money";
 import { listTenantSummaries } from "../_lib/queries";
 
 export default async function AdminTenantsPage() {
@@ -15,6 +16,7 @@ export default async function AdminTenantsPage() {
               <th>Status</th>
               <th>Plano</th>
               <th>Comprovantes no mês</th>
+              <th>Custo de IA no mês</th>
               <th>Criado em</th>
             </tr>
           </thead>
@@ -26,6 +28,9 @@ export default async function AdminTenantsPage() {
                 <td>{tenant.status}</td>
                 <td>{tenant.planCode}</td>
                 <td className="font-num tabular-nums">{tenant.receiptsThisMonth}</td>
+                <td className="font-num tabular-nums">
+                  <Money value={tenant.aiCostThisMonthCents} />
+                </td>
                 <td>{tenant.createdAt.toISOString().slice(0, 10)}</td>
               </tr>
             ))}

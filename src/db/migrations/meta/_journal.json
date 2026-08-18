@@ -85,6 +85,20 @@
       "when": 1787069086468,
       "tag": "0011_harden_membership_rls_null_guc",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787073690033,
+      "tag": "0012_tenants_billing_customer_ref",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787073961322,
+      "tag": "0013_plans_abacatepay_product_id",
+      "breakpoints": true
     }
   ]
 }

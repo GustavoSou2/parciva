@@ -13,6 +13,7 @@ export type TenantSummary = {
   status: "trial" | "active" | "past_due" | "suspended" | "cancelled" | "purged";
   planCode: string;
   receiptsThisMonth: number;
+  aiCostThisMonthCents: Money;
   createdAt: Date;
 };
 

@@ -11,12 +11,17 @@ export type {
   NewUser,
 } from "./application/create-tenant";
 export {
+  listTenantIds,
   slugExists,
   getPlanLimits,
   getTenantSlugById,
+  getTenantStatus,
+  setTenantStatus,
+  getTenantBillingSummary,
   getAutoApprovalCeilingCents,
   saveTenant,
   saveUser,
   saveMembership,
   sendWelcomeEmail,
 } from "./infra/tenant-repository";
+export type { TenantBillingSummary } from "./infra/tenant-repository";

@@ -22,7 +22,8 @@ async function logoutAction(): Promise<void> {
 /**
  * Cabeçalho mínimo — não a navegação completa da spec §13.2 (7 telas:
  * Painel, Fila de revisão, Contratos, Pagadores, Comprovantes,
- * Configurações, Conta). Só Contratos/Pagadores/Revisão existem até este marco.
+ * Configurações, Conta). Só Contratos/Pagadores/Revisão/Conta existem
+ * até este marco (Conta ainda só cobre plano/cobrança, não configurações).
  */
 export default async function TenantLayout({
   children,
@@ -56,6 +57,12 @@ export default async function TenantLayout({
             className="text-body text-content-secondary hover:text-content-primary"
           >
             Revisão
+          </Link>
+          <Link
+            href={`/t/${tenantSlug}/account`}
+            className="text-body text-content-secondary hover:text-content-primary"
+          >
+            Conta
           </Link>
         </nav>
         <form action={logoutAction}>

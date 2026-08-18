@@ -46,6 +46,7 @@ import {
   type ProcessReceiptExtractionDeps,
 } from "@/modules/reconciliation";
 import { getAutoApprovalCeilingCents } from "@/modules/tenant";
+import { enforceQuota, getCurrentUsage, getLimits, incrementUsage } from "@/modules/billing";
 import { saveReceiptFile } from "@/shared/storage";
 import { isErr } from "@/shared/result";
 import { logger } from "@/shared/logger";
@@ -112,6 +113,27 @@ async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
   const { tenantId, receiptId, mimeType, buffer, source, receivedAt, fromPhone } = job.data;
   logger.info("processando job", { tenantId, receiptId, mimeType });
 
+  // Ponto de verdade da cota (spec §11.3) — o pré-filtro no enqueue
+  // (`api/webhooks/whatsapp/route.ts`) só consulta; É AQUI que
+  // `enforceQuota()` incrementa `usage_counters` de verdade, uma vez
+  // por comprovante realmente processado. Sem `receipts`/`storage`
+  // gravados ainda neste ponto — mesmo padrão do caminho "duplicado"
+  // abaixo: rejeitado antes de existir qualquer rastro persistido.
+  // Achado conhecido, não corrigido aqui: se o job FALHAR depois deste
+  // ponto e o BullMQ reencaminhar (retry), o incremento roda de novo
+  // pra a mesma mensagem — sobrecontagem rara, só em falha de
+  // infraestrutura, não em operação normal.
+  const ctx: TenantContext = { tenantId };
+  const quota = await enforceQuota(ctx, "receipts_per_month", { getLimits, getCurrentUsage, incrementUsage });
+  if (isErr(quota)) {
+    logger.warn("cota de comprovantes/mês excedida — comprovante descartado no worker", {
+      tenantId,
+      receiptId,
+      error: quota.error,
+    });
+    return;
+  }
+
   const bufferBytes = Buffer.from(buffer, "base64");
   const raw: RawReceipt = {
     buffer: bufferBytes,
@@ -122,7 +144,6 @@ async function processReceiptJob(job: Job<ReceiptJobData>): Promise<void> {
     ...(fromPhone ? { fromPhone } : {}),
   };
 
-  const ctx: TenantContext = { tenantId };
   const result = await ingestReceipt(ctx, raw, buildDeps(ctx));
 
   if (isErr(result) && result.error === "duplicate") {
@@ -214,12 +235,9 @@ receiptWorker.on("active", (job) => {
   logger.info("worker processando job", { jobId: job.id });
 });
 
-/** Desligamento gracioso — C-31: reinício de servidor não pode deixar job preso em `processing`. */
-async function shutdown(signal: string): Promise<void> {
-  logger.info("recebido sinal, encerrando graciosamente", { signal });
-  await receiptWorker.close();
-  process.exit(0);
-}
-
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
+// Desligamento gracioso (C-31: reinício de servidor não pode deixar job
+// preso em `processing`) é responsabilidade única de `main.ts` — dois
+// `process.on(SIGTERM)` independentes, cada um com seu próprio
+// `process.exit(0)`, correm o risco real de um matar o processo antes
+// do outro terminar de fechar sua conexão (achado ao adicionar o worker
+// de renovação de assinatura, decisão [25]).
