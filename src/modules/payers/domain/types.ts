@@ -4,6 +4,9 @@
 
 export type PayerDocumentType = "cpf" | "cnpj" | "none";
 
+/** `payers.status` (coluna existe desde a fundação, nunca escrita até hoje) — nunca DELETE, só desativar/reativar. */
+export type PayerStatus = "active" | "inactive";
+
 export interface Payer {
   readonly id: string;
   readonly name: string;

@@ -1,7 +1,145 @@
 # Progresso — Parciva
 
-Estado do projeto em 18 de agosto de 2026, com base no código real em `src/`,
+Estado do projeto em 19 de agosto de 2026, com base no código real em `src/`,
 não apenas na spec. Ver `DECISIONS.md` para o porquê de cada escolha.
+
+## Ações pendentes do usuário
+
+Coisas que **só você** consegue fazer — não é trabalho de código, é
+passo manual em painel externo. Nenhuma delas bloqueia o resto do
+projeto, mas sem elas as duas integrações abaixo continuam rodando só
+com segredo/chave fake, nunca testadas contra a API real.
+
+- [ ] **AbacatePay — segredo do webhook.** Criar o webhook no painel da
+  AbacatePay (ambiente dev) apontando para um túnel ngrok
+  (`NGROK_AUTH_TOKEN` já está no `.env`, só falta subir o túnel e criar
+  o webhook apontando pra ele) e me passar o segredo gerado, pra eu
+  colocar em `ABACATE_PAY_WEBHOOK_SECRET`. Detalhe completo: PROGRESS.md
+  "Pendências conhecidas" e DECISIONS.md [25].
+- [ ] **Resend — conta e chave de API.** Criar conta na Resend, gerar
+  uma `RESEND_API_KEY` e me passar (ou colar direto no `.env`). Sem
+  domínio verificado, o envio real cai no sandbox `onboarding@resend.dev`
+  (funciona pra testar, não pra produção) — se quiser remetente com seu
+  próprio domínio, verificar o domínio na Resend e me passar o endereço
+  final pra `EMAIL_FROM_ADDRESS`. Detalhe completo: PROGRESS.md
+  "Pendências conhecidas" e DECISIONS.md [33].
+
+## Próximo passo sugerido
+
+**MFA para owner/admin** (`docs/tasks/fase-0/01-mfa-owner-admin.md`).
+É a única lacuna de segurança da spec que segue como decisão
+explicitamente adiada desde o Marco 2, nunca fechada — spec §10.2
+marca obrigatório para esses dois papéis, e `users.mfaEnabled`/
+`mfaSecretRef` já existem no schema, sem uso, esperando exatamente
+essa tarefa. Escopo fechado, não depende de nenhuma outra pendência
+(nem das ações do usuário acima), e reduz o maior risco de conta
+comprometida do produto hoje: uma senha vazada de owner/admin é
+acesso total ao tenant, sem segunda camada.
+
+Alternativas igualmente prontas pra decidir (specs já escritas, só
+falta escolher):
+
+- **Resto da Fase 5 — checks forenses Camada A/B e Camada C
+  comportamental** (`docs/tasks/fase-5/01-...md`, `02-...md`).
+  Continuação natural da fatia 1 (DECISIONS.md [29]), mas Camada B
+  provavelmente traz dependência nova (análise forense de imagem/PDF),
+  escopo menos fechado que MFA.
+- **Cifra de coluna — documento/telefone do pagador**
+  (`docs/tasks/fase-0/02-...md`). Mesma urgência de "dado sensível
+  hoje em texto claro no banco", mas exige migração expand→migrar→
+  contract (mais passos, mais risco de execução) contra um risco
+  (dump de banco) menos provável no dia a dia que credencial vazada.
+
+Fase 6 (cobrança PIX modelo B) e a fatiação de `docs/spec/` seguem
+deliberadamente fora da lista — a primeira ainda não foi puxada pelo
+usuário (CLAUDE.md já avisa que "chega na Fase 6"), a segunda foi
+escopo explicitamente descartado nesta rodada de documentação.
+
+## O que falta para lançar um MVP
+
+MVP aqui significa: um primeiro tenant real usando modelo A (comprovante
+via WhatsApp) com dinheiro de verdade, não mais um ambiente de dev. Isso
+é ortogonal ao roadmap de fases da spec — dá pra lançar com risco/fraude
+parcial e sem MFA, mas não dá pra lançar sem as pendências abaixo, que
+hoje só foram testadas contra ambiente de dev/sandbox, nunca contra
+tráfego real de produção.
+
+**Bloqueadores — nada disso foi feito ainda, é dívida nova, não
+retrabalho de algo quebrado:**
+
+- [ ] **Deploy real na VPS.** Hoje só existe `docker-compose.yml` de
+  dev e o role `parciva_app` provisionado em CI (DECISIONS.md [13]) —
+  "falta só staging/produção" já estava registrado como dívida de
+  infra separada desde o Marco 6, nunca endereçada. Isso inclui:
+  provisionar a VPS, rodar `infra/init-db.sql` lá, Nginx na frente
+  (TLS + domínio), e o diretório de storage em produção
+  (`/var/lib/parciva/receipts`, permissão `0700` — hoje só existe
+  `./storage/receipts` de dev).
+- [ ] **`X-Accel-Redirect` nunca foi implementado.** ADR-0010/
+  DECISIONS.md [7]: a entrega de comprovante hoje é servida direto
+  pela rota do Next (`/t/<slug>/receipts/<id>/file`) porque não há
+  Nginx em dev. Sem isso em produção, ou implementa o `X-Accel-
+  Redirect` de verdade, ou aceita servir arquivo pela aplicação (menos
+  seguro, mas destrancaria o MVP se a decisão for adiar o Nginx).
+- [ ] **Backup do Postgres.** Não existe hoje nenhuma rotina de
+  backup/restore documentada ou testada — dado real de cliente (ledger,
+  comprovante, pagador) sem backup é risco inaceitável antes do
+  primeiro tenant real.
+- [ ] **Número de WhatsApp do tenant real conectado ao Twilio, testado
+  com tráfego real.** Todo o pipeline (webhook → fila → worker → banco)
+  só foi verificado com job enfileirado manualmente ou contra o
+  ambiente de dev do Twilio — nunca contra uma mensagem real chegando
+  por um número real. ADR-0006 documenta que "cada tenant conecta o
+  próprio número" ainda não está implementado (hoje é número
+  compartilhado) — decidir se o MVP aceita essa simplificação para o
+  primeiro cliente ou se precisa da arquitetura-alvo antes.
+- [ ] **AbacatePay — segredo real do webhook e round-trip HTTP real**
+  (ação do usuário já listada no topo deste arquivo, DECISIONS.md
+  [25]). Sem isso, cobrança PIX nunca rodou contra tráfego de produção,
+  só payload sintético assinado manualmente.
+- [ ] **Resend — conta real** (ação do usuário já listada no topo,
+  DECISIONS.md [33]). Sem chave real, nenhum e-mail (boas-vindas,
+  convite, reset de senha) chega de verdade a um usuário real.
+
+**Fortemente recomendado antes do primeiro cliente, mas não impede
+tecnicamente o lançamento:**
+
+- [ ] **UI do produto precisa de uma passada de design de verdade.**
+  Hoje é formulário/tabela cru em toda tela — ver o mapeamento
+  completo em "Em andamento" abaixo. Não é reconstruir do zero: os
+  tokens e primitivos (`design/quitou.tokens.json`,
+  `src/ui/components/`) já existem, o trabalho é aplicá-los
+  consistentemente em todas as 21 páginas e decidir o que fazer com as
+  4 telas que faltam (Painel, Comprovantes, Configurações, Conta
+  completa). Tecnicamente o produto funciona sem isso; comercialmente,
+  é a primeira coisa que um cliente real vê.
+- [ ] **MFA para owner/admin** (`docs/tasks/fase-0/01-mfa-owner-admin.md`)
+  — ver "Próximo passo sugerido" acima.
+- [ ] **`createProduct` não é idempotente contra "produto já existe" na
+  AbacatePay** — se uma tentativa anterior criar o produto lá mas
+  falhar antes de persistir `plans.abacate_pay_product_id`, toda
+  assinatura futura desse plano trava até correção manual. Baixa
+  probabilidade, mas envolve dinheiro real — vale corrigir antes do
+  primeiro cliente pagante.
+- [ ] **Cifra de coluna — documento/telefone do pagador**
+  (`docs/tasks/fase-0/02-...md`). Hoje CPF/CNPJ e telefone do pagador
+  ficam em texto claro no banco; um dump exporia dado pessoal de
+  terceiro (o pagador, que nem é o cliente direto do Parciva).
+
+**Explicitamente fora do MVP** (fica pra depois, por decisão já
+registrada ou por não fazer sentido pro primeiro cliente):
+
+- Fase 6 (cobrança PIX modelo B) — CLAUDE.md já avisa "chega na Fase 6".
+- Resto da Fase 5 (checks forenses Camada A/B, Camada C comportamental)
+  — Camada A básica (`amount_match`/`date_plausible`/`e2e_reuse`) já
+  cobre os casos de fraude mais óbvios (DECISIONS.md [29]); o resto é
+  reforço, não bloqueador.
+- Segundo provedor de VLM — "só OCR por enquanto", decisão [18], ainda
+  vale: revisão humana no lugar de VLM é mais lento, não inseguro.
+- Painel de superadmin completo (quebra-vidro, impersonação, feature
+  flags, MFA do admin) — só importa na escala de vários clientes;
+  com um único tenant real, o acesso `x-admin-secret` atual é
+  suficiente.
 
 ## Estado geral
 
@@ -85,8 +223,79 @@ Job BullMQ diário reaproveita `subscribeTenant` para gerar a cobrança
 do próximo ciclo (ou finaliza cancelamento, se `cancel_at` já passou),
 com duas guardas independentes contra reencaminhar a mesma cobrança em
 dias seguintes. Verificado ao vivo contra o tenant de teste da decisão
-[25]. UI de faturas e dunning após `past_due` prolongado seguem
-pendentes (ver "Pendências conhecidas").
+[25].
+
+**Fechamento do resto da Fase 4 (dunning + histórico de faturas)
+concluído em 19/08/2026** (DECISIONS.md [27]/[28]): as duas pendências
+que a decisão [26] deixou registradas. Dunning — tenant em `past_due`
+há 7 dias ou mais (decisão do usuário) é suspenso automaticamente pelo
+mesmo cron de renovação, ancorado em `subscriptions.currentPeriodEnd`
+(sem coluna nova) e protegido contra repetir a suspensão pela própria
+validade da transição de estado — sem isso, um tenant que nunca pagasse
+ficaria `past_due` pra sempre. Histórico de faturas — tabela nova
+`invoices` (RLS desde a criação, isolamento testado contra Postgres
+real), uma linha por cobrança PIX gerada por `subscribeTenant`,
+atualizada pelo webhook e exibida em `/t/<slug>/account`.
+
+**Fase 5 (fatia 1) — módulo `fraud`, `fraud_checks`, `risk_score`
+concluído em 19/08/2026** (DECISIONS.md [29]): fecha a decisão [17]
+("risco/fraude é no-op documentado") consolidando o que já existia
+espalhado no código — `amount_match`/`date_plausible` (já eram gates
+duros em `decideAutoApply`, agora também auditados por check) e
+`e2e_reuse` (antes só pego reativamente por violação de índice único,
+agora checado proativamente antes de decidir). Novo módulo
+`src/modules/fraud/`, tabela `fraud_checks` (RLS desde a criação),
+`reconciliation_proposals.risk_score` finalmente populado. Fila de
+revisão (`/t/<slug>/review`) mostra o risco e as checagens ao revisor
+humano. `DUPLICATE_HASH`/`NEAR_DUPLICATE` continuam fora deste módulo —
+são rejeitados antes de existir `receiptId` pra referenciar, design do
+Marco 5. Achado lateral corrigido junto: `reconciliation_proposals`
+tinha RLS desde o Marco 4 mas nunca tinha sido testada contra Postgres
+vivo — `tests/security/tenant-isolation-fraud.test.ts` fecha essa
+lacuna e a de `fraud_checks` ao mesmo tempo. Resto da Fase 5 (checks
+forenses, Camada C comportamental, conciliação por extrato) segue como
+próxima fatia, não pedida ainda.
+
+**Fase 5 (fatia 2) — conciliação por extrato concluída em 19/08/2026**
+(DECISIONS.md [32]): a spec chama isso de "o melhor custo-benefício do
+projeto inteiro" — importar extrato CSV, casar cada linha de crédito
+pelo E2E ID extraído da descrição contra um pagamento existente, subir
+`verification_level` pra `statement`. Novo módulo `src/modules/
+statements/`, tabelas `statement_imports`/`statement_lines` (RLS desde
+a criação), telas `/t/<slug>/statements`. Linha sem match nunca cria
+pagamento sozinha — fica visível pra um humano escolher pagador/
+contrato e registrar a partir dela (`payments.origin/verification_
+level = "statement"`). Escopo desta fatia: só CSV (sem OFX/CNAB), match
+só por E2E (sem valor+data), sem sweep retroativo. Antes de começar,
+achado e corrigido um gap de RBAC maior do que o previsto — ver
+DECISIONS.md [30]/[31].
+
+**Provedor de e-mail real (Resend) + "esqueci minha senha" concluído
+em 19/08/2026** (DECISIONS.md [33]): `src/shared/email.ts` (cliente
+Resend sem SDK) ligado em `sendWelcomeEmail`/`sendInviteEmail`, que
+antes só logavam o link. "Esqueci minha senha" construído do zero
+(mirror de convite): tabela `password_reset_tokens`, telas
+`/forgot-password`/`/reset-password/<token>`, invalida toda sessão
+existente do usuário ao resetar. **Sem conta Resend criada ainda** —
+implementado contra a API pública documentada, verificado ao vivo
+contra Postgres real com o envio de e-mail injetado (não a Resend de
+verdade). Pendência real: falta a chave de API pra validar
+`sendEmail` contra a rede de verdade.
+
+**Editar/desativar pagador, editar/cancelar contrato concluído em
+19/08/2026** (DECISIONS.md [34]): Marco 3 só tinha criar+ler. Editar é
+só metadado (nunca os campos estruturais que já geraram o cronograma
+de parcelas); "excluir" nunca é `DELETE` — pagador desativa/reativa,
+contrato cancela (e cancela as parcelas ainda não pagas junto, parcela
+paga é fato histórico, nunca tocada).
+
+**`docs/adr/` e `docs/tasks/` criados em 19/08/2026** (tarefa de
+documentação, sem mudança de código — `pnpm check` não se aplica): os
+14 ADRs canônicos da spec §17, e a estrutura `docs/tasks/fase-0/` a
+`fase-8/` com specs de escopo fechado para o trabalho futuro já
+identificado. Fecha o link morto de `src/shared/money.ts` para
+`docs/adr/0003-...md`. Ver "Pendências conhecidas" para o que ficou
+fora (fatiação de `docs/spec/`, link morto de `document.ts`).
 
 ## O que está funcionando agora
 
@@ -231,6 +440,20 @@ Redis do `docker-compose.yml`, sem mock):
   chamada nova à AbacatePay (as duas guardas seguraram — nunca cobra
   duplicado). Com `cancel_at` no passado: tenant e `subscriptions`
   foram para `cancelled`, sem nenhuma cobrança criada.
+- **Dunning + histórico de faturas** (DECISIONS.md [27]/[28]): assinei
+  `essential` num tenant de teste contra a AbacatePay de dev real —
+  fatura `pending` gravada com o `providerRef` do checkout; simulei o
+  webhook `checkout.completed` chamando `handleBillingWebhook`
+  diretamente (sem passar pela verificação de assinatura HTTP do
+  endpoint, fora do escopo desta verificação específica) — fatura virou
+  `paid` com `paidAt`, tenant virou `active`. Forcei `currentPeriodEnd`
+  8 dias no passado com `subscriptions.status = "past_due"` e rodei
+  `renewDueSubscriptions` real: tenant e sessão foram para `suspended`,
+  `tenants.suspended_at` preenchido. Rodei de novo sem mudar nada:
+  `skipped`, nenhuma suspensão repetida (guarda de idempotência pela
+  validade da transição). Isolamento cross-tenant de `invoices` testado
+  contra Postgres real junto com o resto de `tenants.ts`
+  (`tests/security/tenant-isolation-tenancy.test.ts`).
 
 ## Fases concluídas
 
@@ -318,7 +541,8 @@ que por fase:
   gravada, sem janela de corrida entre "decidir" e "aplicar". Fecha o
   DoD formal da Fase 1/3 quase inteiro — falta só o que está fora de
   escopo deste marco (ver "Fora do Marco 4" no plano de sessão) e
-  risco/fraude de verdade (Fase 5).
+  risco/fraude de verdade (Fase 5 — parcial desde 19/08/2026, ver
+  DECISIONS.md [29]).
 
 ## Achados
 
@@ -375,6 +599,21 @@ que por fase:
   modernos), mas era uma lacuna real. **Corrigido em 18/08/2026** — ver
   DECISIONS.md [22] (cookie `parciva_csrf` + header `X-Csrf-Token`,
   verificado ao vivo contra `next dev`).
+- **`review/actions.ts` (fila de revisão) nunca checava
+  `requirePermission`** — qualquer membro do tenant, inclusive `viewer`,
+  conseguia aprovar/rejeitar proposta e aplicar pagamento real por essa
+  Server Action. Achado investigando a fila de revisão antes de planejar
+  a conciliação por extrato. **Corrigido em 19/08/2026** — ver
+  DECISIONS.md [30] (`receipts:approve`, já existia em
+  `ROLE_PERMISSIONS` desde a fundação, nunca tinha sido ligado).
+- **Mesmo gap, escopo maior: `contracts/actions.ts`/`payers/actions.ts`
+  nunca checavam `requirePermission`** — criar pagador, criar contrato,
+  registrar pagamento manual e reverter pagamento, tudo sem checagem de
+  papel. **Corrigido em 19/08/2026** — ver DECISIONS.md [31]
+  (`contracts:write`/`payments:write`). Pendência registrada: uma
+  auditoria única de todas as Server Actions do projeto pra confirmar
+  que não existe uma quinta ação no mesmo estado não foi feita, só as
+  encontradas nesta investigação.
 
 ## Em andamento
 
@@ -384,15 +623,32 @@ que por fase:
   não está plugado no worker — por decisão do usuário, não falta técnica
   (DECISIONS.md [18]): todo comprovante que Tier 1/2 não resolverem cai
   em revisão humana, sem escalar a nenhum modelo.
-- **UI real do produto — parcial.** `/t/<slug>/{contracts,payers,review}`
-  existem e funcionam (Marcos 3 e 5), mas são formulários mínimos/tabelas
-  simples — não a UI polida dos tokens Parciva (spec §13.2: hierarquia
-  canvas→panel→card com sombra zero, escala tipográfica binária, etc.).
-  As outras 4 telas da spec (Painel, Comprovantes, Configurações, Conta)
-  não existem.
-- **Sem edição/exclusão de pagador ou contrato** (Marco 3 só fez
-  criação + leitura) — se um dado for cadastrado errado, hoje não tem
-  como corrigir pela UI.
+- **UI real do produto — funcional, mas visualmente muito abaixo do
+  esperado.** As 21 páginas que existem hoje (`login`/`signup`/
+  `forgot-password`/`reset-password`/`invite`, `admin/{page,tenants}`,
+  e todo `/t/<slug>/{contracts,payers,review,statements,account}` com
+  seus `new`/`edit`/detalhe) funcionam ponta a ponta contra o banco
+  real, mas são formulário/tabela HTML crus — nenhuma delas aplica de
+  verdade a hierarquia canvas→panel→card, a escala tipográfica binária
+  ou a disciplina de zero-cor-semântica da spec §13.2/§13.1. Os
+  primitivos existem (`src/ui/components/{Button,Card,Eyebrow,Field,
+  Input,Money,StatusChip,ErrorNote}.tsx`, tokens em
+  `design/quitou.tokens.json`/`quitou.theme.css`) mas boa parte das
+  telas não os usa, ou usa parcialmente — não é falta de fundação de
+  design, é falta de aplicar a fundação que já existe. Além disso, 4
+  telas da spec não existem: Painel (dashboard do tenant — hoje não há
+  nenhuma página em `/t/<slug>/` além das listadas), Comprovantes
+  (visualização de recibo fora da fila de revisão), Configurações,
+  e uma versão completa de Conta (hoje só cobre plano/cobrança).
+  Ver "O que falta para lançar um MVP" — isso é risco de adoção real
+  pro primeiro cliente, não só débito técnico.
+- ~~**Sem edição/exclusão de pagador ou contrato**~~ — **resolvido em
+  19/08/2026** (DECISIONS.md [34]). Editar é metadado (nome/documento/
+  telefone pra pagador; descrição/referência externa pra contrato —
+  nunca os campos estruturais que já geraram o cronograma). "Excluir"
+  nunca é `DELETE`: pagador desativa/reativa (`payers.status`),
+  contrato cancela (`contracts.status` + cancela parcelas ainda não
+  pagas, parcela paga nunca é tocada).
 - ~~**`login` não sabe pra qual tenant redirecionar**~~ — **resolvido em
   18/08/2026** (DECISIONS.md [23]). Segunda policy de RLS em
   `memberships`, só de SELECT, escopada ao próprio usuário
@@ -554,33 +810,49 @@ mexer no modelo de RLS (DECISIONS.md [23] — segunda policy em
   admin. Decisão explícita de adiar (não esquecimento): login básico
   primeiro, testável no navegador; TOTP vira marco próprio. `users.
   mfaEnabled`/`mfaSecretRef` já existem no schema, prontos para receber.
-- **Nenhum provedor de e-mail real configurado** — convite
-  (`identity/application/invite-user.ts`) e boas-vindas (`tenant/infra/
-  tenant-repository.ts`) só logam o link/mensagem no console (dev).
-  Funcional pra testar o fluxo manualmente, mas ninguém recebe e-mail de
-  verdade ainda.
-- **Sem "esqueci minha senha"** — depende do mesmo provedor de e-mail
-  que falta acima.
-- **`docs/adr/` não existe.** `src/shared/money.ts` referencia
-  `docs/adr/0003-money-as-integer-cents.md` e `src/shared/document.ts`
-  referencia `docs/spec/05-data-model.md` — ambos caminhos mortos. A spec
-  inteira ainda vive em dois arquivos únicos (`docs/quitou-spec.md`,
-  `docs/quitou-setup.md`); a fatiação em `docs/spec/` e `docs/adr/`
-  recomendada pelo próprio `quitou-setup.md` (Parte 4) não foi feita.
-- **`docs/tasks/` não existe.** Não há unidade de tarefa versionada por
-  fase — o único rastro de "que fase é essa" está em mensagens de commit e
-  comentários soltos no código.
-- **5 tabelas citadas na spec ainda não existem no schema**: `fraud_checks`,
-  `api_keys`, `webhook_endpoints`, `webhook_deliveries`,
-  `idempotency_keys` (`reconciliation_proposals` existe desde o Marco 4,
-  18/08/2026). Sem as demais, anti-fraude e API pública não têm onde
-  persistir — mas `idempotency_keys` provavelmente nunca precisa existir
-  para o dedupe de webhook WhatsApp, que já usa `inbound_messages.
-  provider_message_id` (ver DECISIONS.md [1], nota de 18/08); ela é
-  relevante só para a API pública da Fase 7.
-- **Módulos da spec ainda sem pasta**: `fraud`, `charges`, `psp` (`payers`,
+- ~~**Nenhum provedor de e-mail real configurado**~~ / ~~**Sem "esqueci
+  minha senha"**~~ — **resolvidos em 19/08/2026** (DECISIONS.md [33]).
+  `src/shared/email.ts` (Resend, sem SDK) ligado em `sendWelcomeEmail`/
+  `sendInviteEmail`; reset de senha completo (`/forgot-password`,
+  `/reset-password/<token>`). **Ainda pendente:** conta Resend não foi
+  criada — `sendEmail` nunca rodou contra a API de verdade, só
+  verificado com o envio injetado/capturado. Verificação de e-mail no
+  cadastro (spec, plano grátis) e templates de e-mail com o design
+  system continuam fora, não pedidos ainda.
+- ~~**`docs/adr/` não existe.**~~ — **resolvido em 19/08/2026.** Os 14
+  ADRs canônicos da spec §17 (`docs/adr/0001-...md` a `0014-...md`)
+  criados a partir de `DECISIONS.md`/CLAUDE.md/schema — cada um traz
+  contexto, decisão e status real (alguns marcados explicitamente
+  "aceito como arquitetura-alvo, não implementado ainda", ex.:
+  ADR-0006 número de WhatsApp por tenant, ADR-0007 opt-out de IA).
+  `src/shared/money.ts` referenciava `docs/adr/0003-money-as-integer-
+  cents.md` como link morto — agora resolve. **Ainda pendente:**
+  `src/shared/document.ts` referencia `docs/spec/05-data-model.md`,
+  que continua sem existir — a fatiação da spec inteira em
+  `docs/spec/` ficou fora de escopo desta rodada, por decisão do
+  usuário (só os 14 ADRs foram pedidos).
+- ~~**`docs/tasks/` não existe.**~~ — **resolvido em 19/08/2026.**
+  Estrutura `docs/tasks/fase-0/` a `fase-8/` criada, com specs de
+  escopo fechado (Objetivo/Critérios de aceite/Fora de escopo) para o
+  trabalho futuro já identificado nesta sessão: MFA (fase-0), cifra de
+  coluna documento/telefone (fase-0), `early_payment_policy:
+  "reduce_amount"` real (fase-1), segundo provedor de VLM (fase-2),
+  resto do painel de superadmin (fase-4), checks forenses Camada A/B
+  e Camada C comportamental (fase-5). Escopo desta rodada foi
+  deliberadamente "estrutura + tarefas futuras já conhecidas", não
+  fatiar a spec inteira em tarefas.
+- **4 tabelas citadas na spec ainda não existem no schema**: `api_keys`,
+  `webhook_endpoints`, `webhook_deliveries`, `idempotency_keys`
+  (`reconciliation_proposals` existe desde o Marco 4, 18/08/2026;
+  `fraud_checks` existe desde a Fase 5 fatia 1, 19/08/2026, DECISIONS.md
+  [29]). Sem as 4 restantes, a API pública não tem onde persistir — mas
+  `idempotency_keys` provavelmente nunca precisa existir para o dedupe
+  de webhook WhatsApp, que já usa `inbound_messages.provider_message_id`
+  (ver DECISIONS.md [1], nota de 18/08); ela é relevante só para a API
+  pública da Fase 7.
+- **Módulos da spec ainda sem pasta**: `charges`, `psp` (`payers`,
   `contracts`, `ledger`, `reconciliation` existem desde o Marco 1,
-  18/08/2026).
+  18/08/2026; `fraud` existe desde a Fase 5 fatia 1, 19/08/2026).
 - **`src/shared/{crypto,errors}.ts` não existem.** Não há criptografia de
   coluna para documento/telefone. (`logger.ts` existe desde o Marco 6,
   DECISIONS.md [21] — cobertura parcial, só processos de produção
@@ -642,15 +914,14 @@ mexer no modelo de RLS (DECISIONS.md [23] — segunda policy em
   transição foram testadas com um segredo fake e payload sintético
   assinado manualmente — não o round-trip HTTP real vindo da
   AbacatePay.
-- **Renovação automática — implementada (DECISIONS.md [26]), dunning
-  prolongado ainda não.** O cron gera a cobrança do próximo ciclo e
-  marca o tenant `past_due`, mas nada escala `past_due` para
-  `suspended` depois de N dias sem pagar — hoje um tenant pode ficar
-  `past_due` indefinidamente. Decisão de produto pendente (quantos dias
-  de tolerância?), não implementada por não ter sido pedida nesta
-  tarefa. Detectar cobrança expirada sem esperar o próximo ciclo via
-  webhook (`GET /billing/list` ou equivalente) também segue sem
-  confirmação empírica.
+- **Renovação automática (DECISIONS.md [26]) e dunning (DECISIONS.md
+  [27]) implementados.** O cron gera a cobrança do próximo ciclo, marca
+  o tenant `past_due` e, se ele continuar assim por 7 dias (decisão do
+  usuário) sem pagar, suspende automaticamente
+  (`transition("past_due", "payment_overdue")`, `tenants.suspended_at`
+  preenchido). Ainda pendente: detectar cobrança expirada sem esperar o
+  próximo ciclo via webhook (`GET /billing/list` ou equivalente) segue
+  sem confirmação empírica.
 - **`createProduct` não é idempotente contra "produto já existe" na
   AbacatePay** — achado durante a verificação da Fase 4 parcial
   (DECISIONS.md [25]): se uma tentativa anterior criar o produto na
@@ -658,19 +929,32 @@ mexer no modelo de RLS (DECISIONS.md [23] — segunda policy em
   product_id`, toda assinatura futura desse plano fica bloqueada até
   correção manual da coluna. Não corrigido — fora do escopo combinado
   com o usuário para esta tarefa.
-- **Sem UI de faturas/histórico de cobrança** na tela `/t/<slug>/
-  account` — mostra só plano atual/ciclo/cancelamento agendado, não a
-  lista de cobranças passadas.
+- ~~**Sem UI de faturas/histórico de cobrança**~~ — **resolvido em
+  19/08/2026** (DECISIONS.md [28]). Tabela nova `invoices` (RLS desde a
+  criação), uma linha por cobrança PIX gerada; `/t/<slug>/account` ganhou
+  o card "Histórico de cobrança" (data, plano, valor, status).
 - **Fora de escopo do Marco 4, deliberadamente:** item 4 do §6.3
   (referência externa tipo "CTR-00432" na mensagem do PIX —
   `ExtractionOutput` não tem esse campo, adicioná-lo mudaria o contrato
-  de extração inteiro); "mensagem fora de ordem" (DoD da Fase 3);
-  risco/fraude de verdade (§6.6 — Fase 5, ver DECISIONS.md [17]);
-  `reconciliation_proposals.risk_score` (não existe no schema — não há
-  dado real pra preencher ainda). `field_confidence` também segue nunca
+  de extração inteiro); "mensagem fora de ordem" (DoD da Fase 3).
+  ~~Risco/fraude de verdade (§6.6 — Fase 5)~~ — **parcial desde
+  19/08/2026** (DECISIONS.md [29]): `amount_match`/`date_plausible`/
+  `e2e_reuse` via módulo `fraud`, `reconciliation_proposals.risk_score`
+  populado; resto da Fase 5 (checks forenses, Camada C, conciliação por
+  extrato) ainda pendente. `field_confidence` também segue nunca
   populado por nenhum tier hoje (nem determinístico nem OCR preenchem
   por campo), então a checagem "nenhum campo crítico abaixo de 0,85"
   do §6.6 só entra em ação quando um tier futuro (VLM) começar a
   preencher essa chave — hoje é um no-op silencioso, não uma lacuna de
   segurança (a confiança geral, que já pondera divergência entre
   tiers, é o proxy disponível).
+- ~~**Auditoria completa de `requirePermission` em todas as Server
+  Actions não foi feita.**~~ — **fechada em 19/08/2026.** `grep -rl
+  '"use server"' src/app` lista só 6 arquivos: `account`/`contracts`/
+  `payers`/`review`/`statements` `actions.ts` (todos com
+  `requirePermission` desde as decisões [30]/[31]/[32]) e
+  `layout.tsx` (só `logoutAction`, que não precisa de permissão —
+  sessão válida já basta pra logout). Nenhuma quinta ação pendente.
+  Rotas de API (`webhooks`, `/api/team/invite`) são um mecanismo
+  diferente, fora desta varredura — `/api/team/invite` já tinha seu
+  próprio fix na decisão [22].

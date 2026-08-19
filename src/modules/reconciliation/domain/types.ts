@@ -66,6 +66,8 @@ export interface Proposal {
   readonly paymentId: string | null;
   readonly proposedAllocations: readonly AllocationLine[];
   readonly confidence: number;
+  /** `null` quando a proposta nunca passou por `executeReceiptPaymentTx` (sem pagador/contrato identificado). */
+  readonly riskScore: number | null;
   readonly decision: ProposalDecision;
   readonly reviewedBy: string | null;
   readonly reviewedAt: Date | null;

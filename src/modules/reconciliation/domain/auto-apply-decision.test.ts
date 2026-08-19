@@ -14,11 +14,12 @@ function input(overrides: Partial<AutoApplyInput> = {}): AutoApplyInput {
     referenceDate: NOW,
     amountCents: money(10000),
     ceilingCents: money(500000),
+    blocksAutoApply: false,
     ...overrides,
   };
 }
 
-describe("decideAutoApply — §6.6 (risco/fraude é no-op documentado neste marco)", () => {
+describe("decideAutoApply — §6.6", () => {
   it("aprova quando todas as condições reais são satisfeitas", () => {
     expect(decideAutoApply(input())).toBe("auto_applied");
   });
@@ -74,5 +75,9 @@ describe("decideAutoApply — §6.6 (risco/fraude é no-op documentado neste mar
     expect(decideAutoApply(input({ amountCents: money(500000), ceilingCents: money(500000) }))).toBe(
       "auto_applied",
     );
+  });
+
+  it("blocksAutoApply (fraude, @/modules/fraud) -> revisão mesmo com tudo mais certo", () => {
+    expect(decideAutoApply(input({ blocksAutoApply: true }))).toBe("needs_review");
   });
 });

@@ -3,8 +3,11 @@ import Link from "next/link";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { getProposalById } from "@/modules/reconciliation";
 import { getReceiptWithExtraction } from "@/modules/ingestion";
+import { listFraudChecksByReceipt } from "@/modules/fraud";
 import { getInstallmentById, listContractsByPayer } from "@/modules/contracts";
 import { listPayers } from "@/modules/payers";
+import { requirePermission } from "@/modules/identity";
+import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Field } from "@/ui/components/Field";
@@ -21,6 +24,7 @@ const ERROR_LABELS: Record<string, string> = {
   already_reviewed: "Esta proposta já foi revisada por outra pessoa/aba.",
   contract_not_found: "Contrato não encontrado.",
   duplicate_transaction: "Já existe um pagamento com essa referência — provável duplicidade.",
+  unauthorized: "Você não tem permissão para aprovar ou rejeitar comprovantes.",
 };
 
 // `auto_applied` fica de fora de propósito: só pode chegar aqui por link
@@ -30,6 +34,12 @@ const DECISION_STATUS: Partial<Record<string, "review" | "rejected" | "reviewed_
   needs_review: "review",
   rejected: "rejected",
   reviewed_approved: "reviewed_approved",
+};
+
+const CHECK_LABELS: Record<string, string> = {
+  amount_match: "Valor bate com o esperado",
+  date_plausible: "Data plausível",
+  e2e_reuse: "Referência de transação não reutilizada",
 };
 
 /** "1500,00" — sem separador de milhar, formato que `fromReais` aceita de volta (ver src/shared/money.ts). */
@@ -47,6 +57,7 @@ export default async function ReviewDetailPage({
   const { tenantSlug, proposalId } = await params;
   const { error, payerId: payerIdParam } = await searchParams;
   const session = await requireTenantSession(tenantSlug);
+  const canApprove = !isErr(requirePermission(session.role, "receipts:approve"));
   const ctx = { tenantId: session.tenantId };
 
   const proposal = await getProposalById(ctx, proposalId);
@@ -54,6 +65,7 @@ export default async function ReviewDetailPage({
 
   const receipt = await getReceiptWithExtraction(ctx, proposal.receiptId);
   const extraction = receipt?.extraction ?? null;
+  const fraudChecks = await listFraudChecksByReceipt(ctx, proposal.receiptId);
 
   // O motor já tinha achado um alvo (revisão por confiança/teto/data, não
   // por falta de pagador/contrato) — `proposedAllocations` só guarda
@@ -154,11 +166,40 @@ export default async function ReviewDetailPage({
         </Card>
       </div>
 
+      {fraudChecks.length > 0 && (
+        <Card>
+          <p className="mb-3 text-body font-medium text-content-primary">
+            Checagens de fraude
+            {proposal.riskScore != null && (
+              <span className="ml-2 font-num text-content-secondary tabular-nums">
+                (risco {proposal.riskScore.toFixed(0)}/100)
+              </span>
+            )}
+          </p>
+          <dl className="flex flex-col gap-2 text-body">
+            {fraudChecks.map((check) => (
+              <div key={check.code} className="flex justify-between">
+                <dt className="text-content-secondary">{CHECK_LABELS[check.code] ?? check.code}</dt>
+                <dd className={check.result === "pass" ? "text-content-secondary" : "text-content-primary"}>
+                  {check.result === "pass" ? "Passou" : check.result === "warn" ? "Atenção" : "Falhou"}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </Card>
+      )}
+
       {!isPending ? (
         <Card>
           <p className="text-body text-content-primary">
             Esta proposta já foi revisada — decisão:{" "}
             {decisionStatus ? <StatusChip status={decisionStatus} /> : proposal.decision}
+          </p>
+        </Card>
+      ) : !canApprove ? (
+        <Card>
+          <p className="text-body text-content-muted">
+            Sem permissão para aprovar ou rejeitar comprovantes deste tenant.
           </p>
         </Card>
       ) : (

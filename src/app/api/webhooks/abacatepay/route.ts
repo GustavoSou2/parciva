@@ -25,6 +25,7 @@ import { logger } from "@/shared/logger";
 import {
   getPlanByCode,
   handleBillingWebhook,
+  markInvoiceStatus,
   upsertSubscription,
   validateAbacatePaySignature,
   type AbacatePayWebhookEvent,
@@ -78,6 +79,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       setTenantStatus,
       getPlanByCode,
       upsertSubscription,
+      markInvoiceStatus,
     });
 
     if (isErr(result)) {

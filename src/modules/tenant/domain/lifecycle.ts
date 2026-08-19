@@ -5,6 +5,13 @@
  * active|suspended|cancelled; suspended → active|cancelled;
  * cancelled → purged; purged sem saída.
  *
+ * `admin_suspend` é a suspensão pedida por um humano (superadmin);
+ * `payment_overdue` é a suspensão automática do cron de dunning
+ * (`billing/application/renew-subscriptions.ts`, tolerância de 7 dias em
+ * `past_due`) — dois eventos distintos para o mesmo destino, nunca
+ * confundir quem decidiu na auditoria (mesmo raciocínio da decisão [19]
+ * de DECISIONS.md, "nomear com precisão pelo que aconteceu").
+ *
  * `admin_reactivate` só é válido a partir de `suspended` — é a ação
  * que desfaz uma suspensão administrativa, não o retorno de
  * `past_due` (esse caminho é `payment_confirmed`, cobrança normal).
@@ -26,6 +33,7 @@ const TRANSITIONS: TenantTransition = {
   },
   past_due: {
     payment_confirmed: "active",
+    payment_overdue: "suspended",
     admin_suspend: "suspended",
     cancel_requested: "cancelled",
   },

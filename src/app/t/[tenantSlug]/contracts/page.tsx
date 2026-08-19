@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { listContracts } from "@/modules/contracts";
+import { requirePermission } from "@/modules/identity";
+import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Money } from "@/ui/components/Money";
@@ -13,15 +15,18 @@ export default async function ContractsPage({
 }) {
   const { tenantSlug } = await params;
   const session = await requireTenantSession(tenantSlug);
+  const canWrite = !isErr(requirePermission(session.role, "contracts:write"));
   const contracts = await listContracts({ tenantId: session.tenantId });
 
   return (
     <>
       <div className="flex items-center justify-between">
         <Eyebrow>Contratos</Eyebrow>
-        <Link href={`/t/${tenantSlug}/contracts/new`} className={buttonClassName("secondary")}>
-          Novo contrato
-        </Link>
+        {canWrite && (
+          <Link href={`/t/${tenantSlug}/contracts/new`} className={buttonClassName("secondary")}>
+            Novo contrato
+          </Link>
+        )}
       </div>
       <Card>
         {contracts.length === 0 ? (

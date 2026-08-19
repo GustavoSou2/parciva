@@ -20,6 +20,7 @@ function toProposal(row: typeof reconciliationProposals.$inferSelect): Proposal 
     paymentId: row.paymentId,
     proposedAllocations: row.proposedAllocations as readonly AllocationLine[],
     confidence: Number(row.confidence),
+    riskScore: row.riskScore !== null ? Number(row.riskScore) : null,
     decision: row.decision,
     reviewedBy: row.reviewedBy,
     reviewedAt: row.reviewedAt,
@@ -33,6 +34,8 @@ export interface NewProposal {
   readonly paymentId: string | null;
   readonly proposedAllocations: readonly AllocationLine[];
   readonly confidence: number;
+  /** Só preenchido quando a proposta passou por `executeReceiptPaymentTx` (`@/modules/fraud`) — `null` para os casos "não dá pra tentar" (sem pagador/contrato). */
+  readonly riskScore?: number | null;
   readonly decision: ProposalDecision;
 }
 
@@ -49,6 +52,7 @@ export async function createProposalTx(
       paymentId: data.paymentId,
       proposedAllocations: data.proposedAllocations,
       confidence: data.confidence.toString(),
+      riskScore: data.riskScore != null ? data.riskScore.toString() : null,
       decision: data.decision,
     })
     .returning({ id: reconciliationProposals.id });

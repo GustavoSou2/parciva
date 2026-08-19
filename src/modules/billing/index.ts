@@ -20,6 +20,8 @@ export {
   getSubscriptionByTenant,
 } from "./infra/subscription-repository";
 export type { BillablePlan } from "./infra/subscription-repository";
+export { recordInvoice, markInvoiceStatus, listInvoicesByTenant } from "./infra/invoice-repository";
+export type { InvoiceStatus, InvoiceSummary, RecordInvoiceInput } from "./infra/invoice-repository";
 export { subscribeTenant } from "./application/subscribe-tenant";
 export type {
   SubscribeTenantInput,

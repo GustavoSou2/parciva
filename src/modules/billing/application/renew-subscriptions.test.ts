@@ -14,6 +14,8 @@ import { renewDueSubscriptions, type RenewSubscriptionsDeps, type SubscriptionDu
 const NOW = new Date("2026-08-18T12:00:00Z");
 const PAST = new Date("2026-08-17T00:00:00Z");
 const FUTURE = new Date("2026-09-18T00:00:00Z");
+/** 8 dias antes de NOW — além dos 7 dias de tolerância de dunning. */
+const OVERDUE_PAST = new Date("2026-08-10T00:00:00Z");
 const APP_BASE_URL = "https://parciva.example.com";
 
 interface Spies {
@@ -156,6 +158,50 @@ describe("renewDueSubscriptions", () => {
 
     expect(results).toEqual([{ tenantId: "tenant-1", outcome: "skipped" }]);
     expect(spies.createRenewalCheckout).not.toHaveBeenCalled();
+  });
+
+  it("past_due há mais de 7 dias (dunning) → suspende o tenant automaticamente", async () => {
+    const { deps, spies } = buildDeps({
+      getSubscriptionByTenant: vi
+        .fn<(tenantId: string) => Promise<SubscriptionDue | null>>()
+        .mockResolvedValue({ planId: "plan-1", status: "past_due", currentPeriodEnd: OVERDUE_PAST, cancelAt: null }),
+      getTenantStatus: vi.fn().mockResolvedValue("past_due"),
+    });
+
+    const results = await renewDueSubscriptions(NOW, APP_BASE_URL, deps);
+
+    expect(results).toEqual([{ tenantId: "tenant-1", outcome: "suspended" }]);
+    expect(spies.setTenantStatus).toHaveBeenCalledWith("tenant-1", "suspended");
+    expect(spies.createRenewalCheckout).not.toHaveBeenCalled();
+  });
+
+  it("tenant já suspenso (segunda rodada do cron) → skipped, nunca suspende de novo", async () => {
+    const { deps, spies } = buildDeps({
+      getSubscriptionByTenant: vi
+        .fn<(tenantId: string) => Promise<SubscriptionDue | null>>()
+        .mockResolvedValue({ planId: "plan-1", status: "past_due", currentPeriodEnd: OVERDUE_PAST, cancelAt: null }),
+      getTenantStatus: vi.fn().mockResolvedValue("suspended"),
+    });
+
+    const results = await renewDueSubscriptions(NOW, APP_BASE_URL, deps);
+
+    expect(results).toEqual([{ tenantId: "tenant-1", outcome: "skipped" }]);
+    expect(spies.setTenantStatus).not.toHaveBeenCalled();
+  });
+
+  it("past_due com cancelamento pedido no passado → cancela, nunca suspende (antes ficava preso pra sempre)", async () => {
+    const { deps, spies } = buildDeps({
+      getSubscriptionByTenant: vi
+        .fn<(tenantId: string) => Promise<SubscriptionDue | null>>()
+        .mockResolvedValue({ planId: "plan-1", status: "past_due", currentPeriodEnd: OVERDUE_PAST, cancelAt: PAST }),
+      getTenantStatus: vi.fn().mockResolvedValue("past_due"),
+    });
+
+    const results = await renewDueSubscriptions(NOW, APP_BASE_URL, deps);
+
+    expect(results).toEqual([{ tenantId: "tenant-1", outcome: "cancelled" }]);
+    expect(spies.setTenantStatus).toHaveBeenCalledWith("tenant-1", "cancelled");
+    expect(spies.markSubscriptionCancelled).toHaveBeenCalledWith("tenant-1");
   });
 
   it("processa múltiplos tenants de forma independente", async () => {

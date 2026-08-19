@@ -3,9 +3,14 @@ import { notFound } from "next/navigation";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { getPayerById } from "@/modules/payers";
 import { listContractsByPayer } from "@/modules/contracts";
+import { requirePermission } from "@/modules/identity";
+import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Money } from "@/ui/components/Money";
+import { Button, buttonClassName } from "@/ui/components/Button";
+import { StatusChip } from "@/ui/components/StatusChip";
+import { setPayerStatusAction } from "../actions";
 
 export default async function PayerDetailPage({
   params,
@@ -14,18 +19,37 @@ export default async function PayerDetailPage({
 }) {
   const { tenantSlug, payerId } = await params;
   const session = await requireTenantSession(tenantSlug);
+  const canWrite = !isErr(requirePermission(session.role, "contracts:write"));
   const ctx = { tenantId: session.tenantId };
 
   const payer = await getPayerById(ctx, payerId);
   if (!payer) notFound();
 
   const contracts = await listContractsByPayer(ctx, payerId);
+  const isActive = payer.status !== "inactive";
+  const toggleStatus = setPayerStatusAction.bind(null, tenantSlug, payerId, isActive ? "inactive" : "active");
 
   return (
     <>
-      <Eyebrow>Pagador</Eyebrow>
+      <div className="flex items-center justify-between">
+        <Eyebrow>Pagador</Eyebrow>
+        {canWrite && (
+          <div className="flex gap-2">
+            <Link href={`/t/${tenantSlug}/payers/${payerId}/edit`} className={buttonClassName("secondary")}>
+              Editar
+            </Link>
+            <form action={toggleStatus}>
+              <Button type="submit" variant="secondary">
+                {isActive ? "Desativar" : "Reativar"}
+              </Button>
+            </form>
+          </div>
+        )}
+      </div>
       <Card>
-        <p className="text-title text-content-primary">{payer.name}</p>
+        <p className="text-title text-content-primary">
+          {payer.name} {!isActive && <StatusChip status="inactive" />}
+        </p>
         <p className="mt-2 text-body text-content-secondary">
           Documento: {payer.documentMasked ?? "não informado"}
         </p>

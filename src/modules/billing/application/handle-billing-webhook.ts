@@ -8,11 +8,17 @@
  * evento para reembolso/disputa vêm só da documentação pública, sem
  * teste de webhook real (depende do segredo configurado no dashboard
  * da AbacatePay, fora do alcance desta tarefa).
+ *
+ * Além do status do tenant, também atualiza a linha de `invoices`
+ * (`billing/infra/invoice-repository.ts`) que `subscribeTenant` grava
+ * `pending` no momento do checkout — `checkout.completed → paid`,
+ * `checkout.refunded → refunded`, `checkout.disputed → failed`.
  */
 
 import type { Result } from "@/shared/result";
 import { err, isErr, ok } from "@/shared/result";
 import { transition, type TenantStatus, type TransitionEvent } from "@/modules/tenant";
+import type { InvoiceStatus } from "../infra/invoice-repository";
 
 export interface AbacatePayWebhookEvent {
   readonly event: string;
@@ -35,6 +41,12 @@ export interface HandleBillingWebhookDeps {
     currentPeriodStart: Date;
     currentPeriodEnd: Date;
   }): Promise<void>;
+  markInvoiceStatus(
+    tenantId: string,
+    providerRef: string,
+    status: InvoiceStatus,
+    paidAt?: Date | null,
+  ): Promise<void>;
 }
 
 export type HandleBillingWebhookOutcome =
@@ -49,6 +61,12 @@ const EVENT_TO_TRANSITION: Partial<Record<string, TransitionEvent>> = {
   "checkout.completed": "payment_confirmed",
   "checkout.refunded": "payment_failed",
   "checkout.disputed": "payment_failed",
+};
+
+const EVENT_TO_INVOICE_STATUS: Partial<Record<string, InvoiceStatus>> = {
+  "checkout.completed": "paid",
+  "checkout.refunded": "refunded",
+  "checkout.disputed": "failed",
 };
 
 /** Ciclo mensal — mesma cadência de `plans.interval` (hoje só "month" existe, spec §11.1). */
@@ -76,6 +94,16 @@ export async function handleBillingWebhook(
   if (isErr(transitionResult)) return err("invalid_transition");
 
   await deps.setTenantStatus(tenantId, transitionResult.value);
+
+  const invoiceStatus = EVENT_TO_INVOICE_STATUS[event.event];
+  if (invoiceStatus) {
+    await deps.markInvoiceStatus(
+      tenantId,
+      event.data.id,
+      invoiceStatus,
+      invoiceStatus === "paid" ? new Date() : null,
+    );
+  }
 
   if (transitionEvent === "payment_confirmed") {
     const plan = await deps.getPlanByCode(planCode);

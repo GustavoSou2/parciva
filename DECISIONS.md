@@ -1365,3 +1365,595 @@ até pagar, nunca escala pra `suspended` sozinho) e detectar cobrança
 expirada sem esperar o próximo ciclo via webhook — ambos exigiriam
 decisão de produto (quantos dias de tolerância?) que não foi pedida
 nesta tarefa.
+
+---
+
+## [27] Dunning automático — 7 dias em `past_due` → `suspended`, sem coluna nova
+
+**Data:** 19/08/2026 (fechamento do resto da Fase 4, pendência da decisão [26])
+
+**Contexto:** A decisão [26] deixou registrado que um tenant em
+`past_due` ficava assim indefinidamente — o cron gerava a cobrança do
+próximo ciclo, mas nada escalava pra `suspended` se o cliente nunca
+pagasse. Faltava uma decisão de produto (quantos dias de tolerância?).
+Perguntado, o usuário confirmou: **7 dias**.
+
+**Decisão:**
+- Novo evento de transição `payment_overdue` (`tenant/domain/types.ts` +
+  `lifecycle.ts`), `past_due → suspended` — distinto de `admin_suspend`
+  (suspensão manual de um superadmin, ainda não implementada em código
+  nenhum). Dois eventos para o mesmo destino, nunca confundidos: quem
+  suspendeu importa pra auditoria, mesmo raciocínio de "nomear com
+  precisão pelo que aconteceu" já usado na decisão [19] pro par
+  `auto_applied`/`reviewed_approved`.
+- **Ancoragem sem coluna nova.** `subscriptions.currentPeriodEnd` já
+  fica congelado no dia em que a renovação falhou (nada o avança
+  enquanto `past_due` — só o webhook, ao confirmar pagamento, move via
+  `nextPeriod()`). Isso já é "desde quando está vencido"; não foi
+  criada uma coluna `past_due_since` porque o dado já existia.
+- **Guarda de idempotência é a própria validade da transição** — mesmo
+  padrão das duas guardas já descritas na decisão [26]: uma vez
+  `suspended`, `transition("suspended", "payment_overdue")` é inválida,
+  então rodar o cron em dias seguintes não repete a suspensão, sem
+  precisar de estado extra em `subscriptions`.
+- `tenant-repository.ts` (`setTenantStatus`) passa a gravar
+  `tenants.suspended_at` (coluna existente desde a fundação, nunca
+  escrita até agora) sempre que o novo status é `suspended` — vale
+  tanto pra esta suspensão automática quanto pra uma futura suspensão
+  manual (`admin_suspend`, ainda não implementada), sem precisar de um
+  segundo ponto de escrita.
+- **Correção incidental, sem escopo próprio:** o loop de
+  `renewDueSubscriptions` foi reordenado para checar `cancelAt <= now`
+  antes de exigir `status === "active"`. Antes desta mudança, um
+  cancelamento pedido enquanto a assinatura já estava `past_due` nunca
+  era revisitado pelo cron (o gate original só olhava pra `active`) —
+  ficava preso pra sempre, nunca efetivado. Achado ao desenhar o novo
+  ramo de dunning, corrigido junto por ser a mesma reordenação.
+
+**Alternativas descartadas:** coluna `past_due_since` dedicada
+(rejeitada — `currentPeriodEnd` já carrega essa informação, coluna nova
+seria dado duplicado, mesmo raciocínio de `installments.paid_cents`
+agregado citado na decisão [14]); reusar o evento `admin_suspend` pra
+suspensão automática (rejeitada — misturaria ator humano e ator sistema
+no mesmo evento, perdendo precisão de auditoria).
+
+**Consequências:** `RenewalOutcome` ganhou `"suspended"`; o worker
+(`billing-renewal-worker.ts`) loga `logger.warn` quando isso acontece
+(evento operacional relevante, mesmo padrão do log de `renewal_failed`
+já existente). Verificado ao vivo contra Postgres/AbacatePay de dev
+reais (script descartável, removido ao final): assinar → fatura
+`pending` → webhook confirma → `active`; forçar `currentPeriodEnd` 8
+dias no passado + `past_due` → cron suspende de verdade
+(`suspended_at` preenchido); rodar de novo → `skipped`, sem repetir.
+
+---
+
+## [28] Histórico de faturas — tabela `invoices` nova, não reaproveita `subscriptions`
+
+**Data:** 19/08/2026 (fechamento do resto da Fase 4)
+
+**Contexto:** `/t/<slug>/account` só mostrava o ciclo atual, nunca
+cobranças passadas (spec §13.2 tela 7, "faturas"). `subscriptions`
+guarda só a linha "atual" por tenant — `upsertSubscription` sempre faz
+`UPDATE` in-place quando já existe linha, nunca `INSERT` de uma nova por
+ciclo, apesar do comentário do arquivo dizer "schema permite histórico"
+(a intenção nunca foi implementada).
+
+**Decisão:** Tabela nova `invoices` (`src/db/schema/tenancy.ts`,
+migração `0014_sad_squadron_sinister.sql` + RLS em
+`0015_invoices_rls.sql`, mesma convenção de FORCE ROW LEVEL SECURITY +
+policy `tenant_isolation` de `0001_rls.sql`/`0008_reconciliation_
+proposals_rls.sql`) — uma linha por cobrança PIX gerada, não por tenant.
+`planCode` é denormalizado de propósito: a fatura mostra o plano de
+QUANDO foi cobrada, não o plano atual do tenant. `providerRef` (id do
+checkout na AbacatePay) tem índice único — é a chave usada pra
+atualizar o status depois.
+
+Transformar `subscriptions` num ledger por ciclo (inserir em vez de
+atualizar) foi descartado: toda função que hoje faz
+`UPDATE ... WHERE tenant_id = ...` (`markSubscriptionPastDue`,
+`markSubscriptionCancelled`) passaria a atualizar TODO o histórico de
+uma vez se `subscriptions` deixasse de ter uma linha só por tenant —
+mudança maior e mais arriscada do que o pedido. Uma tabela nova, só de
+leitura histórica, é aditiva e não toca nada que já funciona.
+
+`subscribeTenant` (`billing/application/subscribe-tenant.ts`) grava a
+fatura `pending` só depois do checkout ter sido criado com sucesso —
+nunca antes, um erro de plano/dados de dono não é cobrança de verdade.
+`handleBillingWebhook` atualiza essa mesma linha por `providerRef`:
+`checkout.completed → paid` (com `paidAt`), `checkout.refunded →
+refunded`, `checkout.disputed → failed`.
+
+**Alternativas descartadas:** reaproveitar `subscriptions` como ledger
+por ciclo (rejeitada, ver acima); join com `plans` em vez de
+denormalizar `planCode` (rejeitada — `plans` é tabela raiz sem RLS,
+misturar root+domínio numa mesma query é evitável aqui e a fatura deve
+mostrar o plano histórico, não o atual).
+
+**Consequências:** Isolamento cross-tenant testado contra Postgres real
+(`tests/security/tenant-isolation-tenancy.test.ts`, 3 casos novos, mesmo
+padrão das outras tabelas da decisão [21]) — nenhuma tabela nova de
+domínio entra sem RLS desde já, invariante 1 do CLAUDE.md.
+`/t/<slug>/account` ganhou o card "Histórico de cobrança" (data, plano,
+valor, status em português — mesmo padrão local de rótulo já usado
+nesta página pra status do tenant, sem tocar no `StatusChip`
+compartilhado). Verificado ao vivo contra Postgres/AbacatePay de dev
+reais: assinar gera fatura `pending`; chamar `handleBillingWebhook`
+direto com um evento `checkout.completed` sintético (sem passar pela
+verificação de assinatura do endpoint, fora do escopo desta
+verificação) vira `paid` com `paidAt` preenchido.
+
+---
+
+## [29] Fase 5 (fatia 1): módulo `fraud`, `fraud_checks`, `risk_score` — consolidação, não checks novos
+
+**Data:** 19/08/2026
+
+**Contexto:** A decisão [17] deixou `decideAutoApply` sem risco/fraude
+("no-op documentado") porque o módulo `fraud` (Fase 5, spec §8) não
+existia. Perguntado sobre por qual pedaço da Fase 5 começar (a spec tem
+4 camadas de anti-fraude + conciliação por extrato, custos bem
+diferentes), o usuário escolheu **consolidar o que já existia
+espalhado no código**: `duplicate_hash`, `near_duplicate`, `e2e_reuse`,
+`amount_match`, `date_plausible` — formalizar como módulo real, tabela
+`fraud_checks`, `risk_score`, ligado a `decideAutoApply`. As outras 3
+opções (checks forenses novos — PAYEE_MATCH/E2E_FORMAT/EXIF/ELA/etc.,
+Camada C comportamental, conciliação por extrato) ficam pra uma fatia
+futura.
+
+**Investigação prévia — quanto disso já existia de verdade:**
+- `DUPLICATE_HASH`/`NEAR_DUPLICATE`: `ingestion/application/ingest-
+  receipt.ts` já bloqueia ANTES de qualquer `receipts` row existir
+  (`return err("duplicate")`) — sem `receiptId`, não há como escrever
+  `fraud_checks` ali (FK obrigatória). Design deliberado desde o Marco
+  5 ("rejeitado antes de existir qualquer rastro persistido"), não uma
+  lacuna nova — **ficou de fora desta fatia**, sem mudança.
+- `AMOUNT_MATCH`/`DATE_PLAUSIBLE`: já eram condições duras em
+  `decideAutoApply` (`remainingCents === 0`, `isPlausibleDate`) —
+  continuam gates independentes, inalterados. Passaram a também gerar
+  uma linha em `fraud_checks` (auditoria por check, spec §5.3) — não é
+  regra de decisão nova, é registro do que já decidia.
+- `E2E_REUSE`: só era pego REATIVAMENTE (violação `23505` no insert de
+  `payments`, capturada como `duplicate_transaction`). Passou a ser
+  checado PROATIVAMENTE, antes de `decideAutoApply`, dentro da mesma
+  transação (`transactionRefAlreadyUsedTx`,
+  `reconciliation/infra/payment-repository.ts`) — esta é a única
+  proteção genuinamente nova desta fatia. O catch reativo continua
+  intacto como rede de segurança contra corrida.
+
+**Decisão:**
+- **Novo módulo `src/modules/fraud/`.** `domain/evaluate.ts`
+  (`evaluateFraudChecks`, puro) pontua os 3 signals via `FraudSignals`
+  → `FraudAssessment { checks, riskScore, blocksAutoApply }`. Pesos
+  (`CHECK_WEIGHTS`): `amount_match: 50`, `date_plausible: 40`,
+  `e2e_reuse: 60` — deliberadamente NÃO proporcionais à "força" de cada
+  check; `e2e_reuse` força revisão por pertencer a `FORCES_REVIEW`
+  (conjunto explícito, spec §8.2: "qualquer check fail de peso alto
+  força revisão independentemente do score"), não porque o peso
+  numérico dele "vence" a soma — os outros dois (`amount_match` +
+  `date_plausible`) sozinhos já conseguem cruzar
+  `DEFAULT_RISK_SCORE_THRESHOLD` (50, único nesta fatia — sem perfil
+  por tenant ainda, mesma simplificação de
+  `DEFAULT_AUTO_APPROVAL_CEILING_CENTS` antes de virar setting)
+  independentemente de `e2e_reuse`, provando que os dois mecanismos
+  (força vs. score) são testáveis em isolamento.
+- **`decideAutoApply` ganha `blocksAutoApply: boolean`** — não sabe de
+  score nem peso, só do resultado final de `@/modules/fraud`, mesmo
+  padrão das outras condições que já tinha. `isPlausibleDate` (antes
+  privada) foi exportada dentro do módulo `reconciliation` pra
+  `payment-repository.ts` reusar sem duplicar a lógica de dias.
+- **`fraud_checks`** (`0016_young_ted_forrester.sql` + RLS em
+  `0017_fraud_checks_rls.sql`, mesma convenção de `0008`/`0015`) — uma
+  linha por check, sempre gravada dentro de `executeReceiptPaymentTx`,
+  auto-aplicado ou não. `reconciliation_proposals.risk_score`
+  (`numeric`, nullable) finalmente populado — a coluna já era prevista
+  na spec (§5.3) mas nunca criada por falta de dado real (comentário
+  antigo em `financial.ts`, agora removido).
+- **UI de revisão** (`/t/<slug>/review`, `/t/<slug>/review/<id>`):
+  coluna "Risco" na lista, card "Checagens de fraude" no detalhe — dá
+  ao revisor humano o motivo por trás do risco, reforçando o invariante
+  5 do CLAUDE.md ("na dúvida, revisão humana") com mais contexto, não
+  só a decisão pronta.
+- **Isolamento cross-tenant testado contra Postgres real** — achado
+  durante esta tarefa: `reconciliation_proposals` tinha RLS desde o
+  Marco 4 mas NUNCA tinha sido exercitada contra Postgres vivo (o
+  arquivo de isolamento de reconciliação só cobre `executeManualPayment`,
+  que nunca grava proposal). `tests/security/tenant-isolation-fraud.test.ts`
+  fecha as duas lacunas de uma vez (fixture via `executeReceiptPayment`
+  real) — mesmo padrão de "achar e corrigir lacuna de RLS nunca
+  testada" da decisão [13]/[21], só que pego proativamente aqui, antes
+  de virar incidente.
+
+**Alternativas descartadas:** pesos proporcionais à "força" de cada
+check, com `e2e_reuse` dominando a soma (rejeitado — acoplaria os dois
+mecanismos de bloqueio, dificultando testar/entender cada um
+isoladamente; a spec já separa os dois conceitos: pertencer ao
+conjunto de força vs. contribuir pro score); threshold configurável
+por tenant já nesta fatia (rejeitado — nenhum dado real ainda para
+calibrar por tenant; mesma disciplina de introduzir a simplificação
+primeiro, configurabilidade depois, já usada pro teto de
+auto-aprovação); gravar `fraud_checks` também no caminho de
+duplicata/quase-duplicata da ingestão (rejeitado — exigiria criar a
+`receipts` row ANTES do check de duplicata, mudando uma ordem de
+operações deliberada do Marco 5; fora do escopo combinado com o
+usuário).
+
+**Consequências:** Quando a próxima fatia da Fase 5 chegar (checks
+forenses, Camada C, ou conciliação por extrato), `FraudSignals`/
+`CHECK_WEIGHTS`/`FORCES_REVIEW` ganham entradas novas, não uma
+reescrita — a mesma extensão que a decisão [17] já previa. `pnpm check`
+completo (lint + tipos + 316 testes, incluindo os 6 novos de
+isolamento) passa limpo; migração aplicada e verificada ao vivo contra
+o Postgres de dev real (fixture end-to-end: `amount_match` corretamente
+reprovado por um pagamento acima do principal, `risk_score` calculado,
+`reconciliation_proposals`/`fraud_checks` isolados por tenant).
+
+---
+
+## [30] `receipts:approve` ligado em `review/actions.ts` — gap de autorização real, achado e corrigido
+
+**Data:** 19/08/2026
+
+**Contexto:** Investigando a fila de revisão antes de planejar a
+conciliação por extrato, achei que `approveReviewAction`/
+`rejectReviewAction` (`src/app/t/[tenantSlug]/review/actions.ts`) nunca
+chamavam `requirePermission` — só `requireTenantSession` (que confirma
+membership, não permissão nenhuma). Qualquer membro do tenant,
+inclusive `viewer` (só leitura por design, spec §3.1), conseguia
+aprovar/rejeitar uma proposta e aplicar pagamento real por essa
+Server Action. `receipts:approve` já existia em `ROLE_PERMISSIONS`
+(`identity/domain/types.ts`) desde a fundação — `operator` tem,
+`viewer` não — mas nunca tinha sido checado em rota nenhuma. Mesma
+categoria de lacuna que a decisão [22] fechou pro CSRF de
+`/api/team/invite`: permissão desenhada, nunca ligada.
+
+Perguntei ao usuário se corrigia agora ou registrava como pendência
+pra não misturar com a tarefa de conciliação por extrato — confirmado:
+corrigir agora.
+
+**Decisão:** As duas actions passam a chamar
+`requirePermission(session.role, "receipts:approve")` antes de
+qualquer mutação, redirecionando com `?error=unauthorized` em caso de
+falha (mesmo padrão de `account/actions.ts`). `review/[proposalId]/
+page.tsx` ganhou `canApprove` (mesmo padrão de `canWrite` em
+`account/page.tsx`) — quando falso numa proposta `needs_review`, mostra
+uma mensagem em vez do formulário de aprovar/rejeitar, em vez de deixar
+um botão visível que só devolveria erro ao ser clicado.
+
+**Alternativas descartadas:** usar `payments:write` em vez de
+`receipts:approve` (rejeitada — `payments:write` também libera
+registrar pagamento manual em qualquer contrato, o que a spec
+explicitamente nega ao operador: "aprova/rejeita, não mexe em
+contrato"; `receipts:approve` é a permissão certa, só nunca tinha sido
+usada).
+
+**Consequências:** A lógica pura (`hasPermission`/`requirePermission`
+pra `receipts:approve`) já era testada em
+`identity/domain/authorization.test.ts` antes desta correção — o que
+faltava era só a ligação na rota, sem lógica nova pra testar de
+unidade. Verificação ao vivo da Server Action em si exigiria navegador
+(mesma limitação já documentada pra outros fluxos de Server Action
+deste projeto, ex. a verificação da fila de revisão no Marco 5) — não
+feita aqui; `tsc`/`eslint`/suite de testes completa confirmados limpos
+depois da mudança.
+
+---
+
+## [31] `contracts:write`/`payments:write` ligados em `contracts`/`payers` actions — mesmo gap da decisão [30], escopo maior
+
+**Data:** 19/08/2026
+
+**Contexto:** Investigando a fila de revisão pra decisão [30], notei
+que o padrão "Server Action sem `requirePermission`" não era exclusivo
+dela — `contracts/actions.ts` (`createContractAction`,
+`registerPaymentAction`, `reversePaymentAction`) e
+`payers/actions.ts` (`createPayerAction`) tinham exatamente o mesmo
+problema, só que nas ações financeiras centrais do produto: qualquer
+membro do tenant, inclusive `viewer` (só leitura por design) e
+`operator` (spec: "não mexe em contrato"), conseguia criar pagador,
+criar contrato, registrar pagamento manual e reverter pagamento.
+Confirmado com o usuário antes de prosseguir pra conciliação por
+extrato: corrigir agora.
+
+**Decisão:**
+- `createContractAction` → `requirePermission(session.role,
+  "contracts:write")`.
+- `registerPaymentAction`/`reversePaymentAction` → `requirePermission
+  (session.role, "payments:write")`.
+- `createPayerAction` → `requirePermission(session.role,
+  "contracts:write")` — não existe `payers:write` no enum de
+  `Permission` (`identity/domain/types.ts`); a spec bundla gestão de
+  pagador com gestão de contrato sob Admin ("Cria contratos" já
+  pressupõe poder cadastrar quem vai assinar um), e hoje nenhum papel
+  tem um dos dois sem o outro (`owner`/`admin` têm ambos,
+  `operator`/`viewer` não têm nenhum) — introduzir uma permissão nova
+  só pra este caso seria granularidade sem uso real ainda.
+- Todas redirecionam com `?error=unauthorized` em falha, mesmo padrão
+  de `account/actions.ts`/`review/actions.ts` (decisão [30]).
+- Páginas correspondentes (`contracts/page.tsx`, `contracts/new/
+  page.tsx`, `contracts/[contractId]/page.tsx`, `payers/page.tsx`,
+  `payers/new/page.tsx`) ganharam `canWrite` (mesmo padrão de
+  `canWrite`/`canApprove` já usado em `account/page.tsx`/decisão [30])
+  — escondem o link/formulário de escrita em vez de mostrar um botão
+  que só devolveria erro ao ser clicado. `payers/[payerId]/page.tsx` é
+  só leitura, sem forma de escrita — não precisou de gate.
+
+**Alternativas descartadas:** criar `payers:write` dedicado (rejeitada
+por ora — nenhum papel hoje precisaria diferenciar os dois; revisar se
+um dia existir um papel que só gerencia pagador, não contrato).
+
+**Consequências:** Mesma lacuna de categoria que a decisão [30] já
+descreveu, agora fechada nas quatro ações financeiras centrais, não só
+na fila de revisão. `tsc`/`eslint`/suite completa confirmados limpos.
+Verificação ao vivo da Server Action em si (não só da lógica de
+permissão, já testada em `authorization.test.ts`) exigiria navegador —
+mesma limitação da decisão [30], não feita aqui. Vale considerar, fora
+do escopo desta tarefa, uma auditoria única de TODAS as Server Actions
+do projeto pra garantir que não existe uma quinta ação com o mesmo
+problema — não feita porque não foi pedida, mas as duas rodadas de
+achado (decisões [30] e [31]) sugerem que pode valer a pena.
+
+---
+
+## [32] Fase 5 (fatia 2): conciliação por extrato — módulo `statements`, só CSV, match só por E2E
+
+**Data:** 19/08/2026
+
+**Contexto:** A spec chama a conciliação por extrato de "o melhor
+custo-benefício do projeto inteiro" (§8.1, Camada D) — importar o
+extrato bancário e casar o E2E ID do comprovante com o crédito real na
+conta transforma "parece verdadeiro" em "consta na minha conta". O
+usuário escolheu isso como continuação da Fase 5, depois da fatia 1
+(módulo `fraud`, decisão [29]). O schema já previa isto desde a
+fundação: `payments.origin`/`payments.verification_level` já tinham
+`"statement"` no enum (`financial.ts`), nunca usado até agora.
+
+Duas decisões de escopo tomadas com o usuário antes de implementar:
+- **Só CSV** nesta fatia — sem dependência nova de parsing (parser
+  hand-rolled, `domain/csv-parser.ts`, mesmo espírito de
+  `logger.ts`/sessão opaca). OFX/CNAB ficam para uma fatia futura.
+- **Linha sem match nunca cria pagamento automaticamente** — fica
+  visível numa tela; um humano escolhe pagador/contrato e registra o
+  pagamento a partir dela, sempre ação explícita.
+
+**Decisão:**
+- **Novo módulo `src/modules/statements/`.** `domain/csv-parser.ts`
+  (puro) aceita cabeçalho com sinônimos comuns em português (`data`/
+  `histórico`/`valor` e variações), delimitador `,` ou `;` (detectado
+  pelo cabeçalho — banco BR com decimal por vírgula quase sempre usa
+  `;`, óbvio depois de tentar comma+vírgula-decimal juntos e ver que é
+  estruturalmente incompatível: um valor "1.234,56" com vírgula-
+  delimitador quebra o próprio campo em dois), valor em formato BR ou
+  decimal simples com ponto. Linha de débito (valor ≤ 0) é descartada
+  — só crédito importa pra casar com pagamento recebido. Linha
+  malformada é descartada individualmente (`skippedRows`), nunca
+  derruba o arquivo inteiro.
+- **Match só por E2E ID**, extraído da descrição via `extractE2eId`
+  (nova export de `ingestion/domain/deterministic-extractor.ts` —
+  wrapper fino sobre o `E2E_ID_REGEX` já existente pro comprovante,
+  nunca duplicado). Nada de match por valor+data — ambíguo sem mais
+  contexto, e a spec descreve o mecanismo como "casa o E2E ID", não
+  aproximação.
+- **`reconciliation` ganhou três funções novas**
+  (`infra/payment-repository.ts`): `findPaymentByTransactionRef`
+  (recebe o E2E id bruto, faz o hash internamente — quem chama nunca
+  lida com hash); `upgradeVerificationLevelToStatement` ("nível sobe,
+  nunca desce" garantido no próprio `WHERE` do UPDATE, não depende de
+  disciplina de quem chama — mesmo espírito de RLS/trigger do ledger);
+  `executeStatementPayment` (terceira variação de `applyAllocationTx`,
+  ao lado de `executeManualPayment`/`executeReceiptPayment` — só troca
+  `origin`/`verificationLevel` pra `"statement"`).
+- **Achado durante a implementação, corrigido:** `actorType` do
+  lançamento de ledger era `params.origin === "manual" ? "user" :
+  "system"` — com `origin: "statement"` isso classificaria uma decisão
+  100% humana (o caminho manual é SEMPRE um humano escolhendo pagador/
+  contrato) como `actorType: "system"` na auditoria. Corrigido pra um
+  `Set` `HUMAN_INITIATED_ORIGINS` (`manual`, `statement`) — `receipt`
+  continua sendo o único `origin` decidido pelo motor sozinho.
+- **UI:** `/t/<slug>/statements` (lista de imports + upload),
+  `/t/<slug>/statements/<id>` (linhas: casada automaticamente/manual/
+  sem match), `/t/<slug>/statements/<id>/lines/<id>` (mesma UX de
+  payer→contract progressivo de `review/[proposalId]/page.tsx`, pro
+  caminho manual). Todas as Server Actions checam
+  `requirePermission(session.role, "payments:write")` — mesmo padrão
+  recém-fechado nas decisões [30]/[31], sem repetir o gap.
+- **Schema:** `statement_imports`/`statement_lines`
+  (`src/db/schema/statements.ts`, migração `0018_good_alex_power.sql`
+  + RLS em `0019_statements_rls.sql`, mesma convenção de
+  `0008`/`0015`/`0017`). `matched_payment_id` referencia `payments`
+  (nunca o contrário).
+
+**Achado durante os testes, corrigido:** `parseStatementDate` aceitava
+qualquer string no formato `dd/mm/aaaa`/`aaaa-mm-dd` sem validar se a
+data existe de verdade — `new Date(...)` faz *rollover* silencioso
+(mês 13 vira janeiro do ano seguinte) em vez de rejeitar. Uma data
+inválida no extrato seria silenciosamente aceita como uma data
+diferente, nunca chutar (mesmo espírito §7.4). Corrigido com validação
+por round-trip: reconstrói a data e confere se ano/mês/dia batem com o
+que foi parseado antes de aceitar.
+
+**Alternativas descartadas:** match por valor+data como fallback
+quando não há E2E na descrição (rejeitada — ambíguo, spec descreve o
+mecanismo como E2E especificamente); criar pagamento automaticamente
+pra linha de crédito sem match (rejeitada pelo usuário — sempre ação
+humana explícita); suporte a OFX/CNAB já nesta fatia (rejeitada —
+exigiria parser mais robusto/dependência nova, sem dado real pra
+testar contra todo banco).
+
+**Consequências:** Verificado ao vivo contra Postgres real (script
+descartável, removido ao final, dois cenários): (1) pagamento
+`document` existente + linha de extrato com o mesmo E2E na descrição →
+`verification_level` sobe pra `statement`, linha marcada `auto_e2e`;
+(2) linha sem E2E reconhecível → sem match, humano cria pagamento a
+partir dela → `payments.origin`/`verification_level = "statement"`,
+linha marcada `manual`. Isolamento cross-tenant das duas tabelas novas
+testado contra Postgres real (`tests/security/tenant-isolation-
+statements.test.ts`, fixture via `importStatement` real). `pnpm check`
+completo (lint + tipos + 330 testes) passa limpo. Fora desta fatia,
+registrado em `statements/README.md`: OFX/CNAB, sweep retroativo
+(pagamento criado depois de um import não é re-casado contra linhas
+antigas sem match), codificação além de UTF-8, perfil de risco por
+tenant.
+
+---
+
+## [33] Provedor de e-mail real (Resend) + "esqueci minha senha"
+
+**Data:** 19/08/2026
+
+**Contexto:** Convite e boas-vindas só logavam o link (dev) — nenhum
+cliente real recebia e-mail. "Esqueci minha senha" não existia nem
+parcialmente (nenhuma tabela, nenhuma tela) — pendência registrada
+desde o Marco 2. Perguntado sobre qual provedor (a spec não recomenda
+nenhum, mesma situação da AbacatePay/VLM), o usuário escolheu
+**Resend**. Confirmado fazer os dois: ligar e-mail real no que já
+existia E construir reset de senha do zero. **Sem conta Resend criada
+ainda** — implementado contra a API pública documentada (estável:
+`POST /emails`, Bearer token), sem verificação ao vivo — mesmo status
+do segredo do webhook da AbacatePay antes de existir (decisão [25]).
+
+**Decisão:**
+- **`src/shared/email.ts`** (novo) — cliente Resend sem SDK, `fetch`
+  cru (mesmo padrão de `abacatepay-client.ts`/Twilio). Fica em
+  `shared/` (não em `identity`/`tenant`) porque os dois módulos usam —
+  mesmo raciocínio de `logger.ts`/`rate-limit.ts`. `EMAIL_FROM_ADDRESS`
+  com default de dev pro sandbox público da própria Resend
+  (`onboarding@resend.dev`, funciona sem domínio verificado).
+- **"Esqueci minha senha" — mirror quase exato de `invite.ts`/
+  `invite-repository.ts`/`accept-invite.ts`** (módulo `identity`), sem
+  `tenantId` (reset não é por tenant) e com expiração de 1 hora
+  (`PASSWORD_RESET_DURATION_HOURS`) — bem mais curta que convite (3
+  dias) ou sessão (7 dias): link de reset parado é superfície de
+  ataque, não conveniência. Tabela raiz nova `password_reset_tokens`
+  (`0020_silent_mordo.sql`, sem RLS — mesmo motivo de `sessions`/
+  `invite_tokens`).
+- **`request-password-reset.ts` nunca revela se o e-mail existe** —
+  devolve `void` sempre, nunca um `Result` que distinguiria "achei"/
+  "não achei"; mesmo cuidado anti-enumeração que `login.ts` já tem
+  ("e-mail ou senha incorretos", nunca "e-mail não encontrado"). Rota
+  (`api/auth/request-password-reset/route.ts`) tem rate limit por IP e
+  por e-mail (`checkRateLimit`, mesma função de `login/route.ts`) —
+  evita spam de e-mail e reduz o valor de usar isto como oráculo de
+  enumeração; sempre `200 {ok:true}`, inclusive rate-limitado.
+- **`reset-password.ts` invalida TODAS as sessões existentes do
+  usuário ANTES de criar a nova** (`deleteAllSessionsForUser`, nova
+  função em `session-repository.ts`) — se a senha precisou ser
+  resetada (possível vazamento), sessões antigas não devem sobreviver.
+  Login automático ao final, mesmo raciocínio de `accept-invite.ts`.
+  Resposta espelha `login.ts` (lista de tenants via
+  `listMembershipsForUser`), não um `tenantSlug` único — reset não é
+  ligado a UM convite/tenant.
+- **Rotas + telas seguem o padrão API route + client component de
+  login/accept-invite** (`/forgot-password`, `/reset-password/
+  <token>`), não Server Action — esse é o padrão só de Marco 3+ pra UI
+  de produto; auth continua no padrão do Marco 2.
+- **E-mail real ligado no que já existia** — `sendWelcomeEmail`
+  (`tenant/infra/tenant-repository.ts`) e `sendInviteEmail`
+  (`api/team/invite/route.ts`) passam a chamar `sendEmail(...)`, mas
+  continuam logando o link/token cru sempre (não só em falha) — é a
+  única forma de testar sem depender de caixa de entrada real, ainda
+  mais sem conta Resend criada. Nenhuma assinatura de domain/
+  application mudou (`invite-user.ts`/`create-tenant.ts` intactos) —
+  só a implementação por dentro do dep já injetado.
+
+**Alternativas descartadas:** SendGrid/Postmark (a spec não recomenda
+nenhum; Resend escolhida pelo usuário por API mais simples, encaixando
+no padrão de client fino já usado no projeto); só ligar e-mail real
+sem construir reset de senha (rejeitada pelo usuário — as duas
+pendências dependiam do mesmo provedor, fechar juntas evita retrabalho
+de configurar tudo de novo depois).
+
+**Consequências:** Verificado ao vivo contra Postgres real (script
+descartável, removido ao final — `sendResetEmail` injetado capturando
+o token, sem chamar a Resend de verdade): pedido de reset gera token;
+pedido para e-mail inexistente completa sem lançar (nunca revela);
+confirmar reset atualiza a senha, invalida a sessão antiga, cria
+sessão nova, deleta o token (não pode ser reusado). `pnpm check`
+completo (lint + tipos + 334 testes, incluindo o primeiro teste de
+`application/` deste módulo — exceção deliberada, ordem de invalidação
+de sessão é segurança). **Pendência real:** verificação ao vivo contra
+a API de verdade da Resend aguarda o usuário criar a conta e passar a
+chave — sem isso, `sendEmail` nunca foi exercitado contra rede real
+nesta tarefa.
+
+---
+
+## [34] Editar/desativar pagador, editar/cancelar contrato — nunca `DELETE`
+
+**Data:** 19/08/2026
+
+**Contexto:** Marco 3 só entregou criar+ler pagador/contrato — um
+cadastro errado não tinha como ser corrigido pela UI. Antes de
+implementar, dois limites de escopo confirmados com o usuário:
+
+- **Editar contrato é só metadado** (`description`/`externalRef`) —
+  nunca os campos estruturais (`principalCents`/`installmentsCount`/
+  `startDate`/`earlyPaymentPolicy`/`toleranceCents`), que já geraram o
+  cronograma em `installments` na criação. Editar isso depois
+  desincronizaria do que já foi (talvez) pago — fora de escopo,
+  exigiria regerar o cronograma inteiro.
+- **"Excluir" nunca é `DELETE`** — sempre desativar (pagador) ou
+  cancelar (contrato), mesmo espírito de `payments.status: "reversed"`
+  (nunca apagado, só marcado). `payers.status`/`contracts.status` já
+  existiam no schema desde a fundação (`default("active")`), nunca
+  escritos por código nenhum até agora — a coluna já estava pronta,
+  só faltava algo escrevendo nela.
+
+**Decisão:**
+- **Módulo `payers`**: `updatePayer` (application) reusa
+  `validateNewPayer` sem duplicar validação — mesma forma de
+  `createPayer`. Infra ganhou `documentHashExistsExcluding` (mesma
+  checagem de duplicidade, excluindo o próprio pagador — editar sem
+  trocar o documento não deveria "colidir com si mesmo"),
+  `savePayerUpdate` (nome com prefixo "save", mesmo padrão de
+  `savePayer`/`saveContractWithSchedule`/`saveTenant` — infra sempre
+  persiste, o verbo de domínio fica no nome público da application) e
+  `setPayerStatus` (toggle `active`/`inactive`, sem cascata pra
+  `contracts` — nada no código lê `payers.status`).
+- **Módulo `contracts`**: `updateContract` (application) — mesma
+  forma, só valida unicidade de `externalRef` excluindo o próprio.
+  `cancelContract` (application) rejeita se já `cancelled`; a
+  transação de verdade (`cancelContractTx`, infra) trava as parcelas
+  (`lockInstallmentsByContractTx`, já existia) e marca `cancelled`
+  toda parcela que NÃO estiver `paid` (`updateInstallmentTx`, já
+  existia) — parcela paga é fato histórico, nunca tocada. Sem
+  lançamento de ledger: mudança de status administrativo, não
+  movimento de dinheiro (mesmo raciocínio do upgrade de
+  `verification_level` na conciliação por extrato, decisão [32]).
+- **UI**: `payers/[payerId]/edit`, `contracts/[contractId]/edit`
+  (formulários espelhando `.../new`, campos pré-preenchidos); botões
+  "Desativar"/"Reativar" e "Cancelar contrato" nas telas de detalhe.
+  Todas as Server Actions novas checam `requirePermission(session.role,
+  "contracts:write")` — mesma permissão de criar (não existe
+  `payers:write`/permissão dedicada de cancelar, decisão [31]), nunca
+  repetindo o gap das decisões [30]/[31]. `StatusChip` ganhou a chave
+  `inactive` (pagador desativado); contrato cancelado reusa a chave
+  `cancelled` que já existia (hoje só usada por parcela — mesmo
+  rótulo/estilo fazem sentido pra contrato, sem inventar cor nova).
+- Formulário de registrar pagamento manual/reverter fica escondido
+  quando o contrato já está `cancelled` (`isContractActive`,
+  `contracts/[contractId]/page.tsx`) — registrar pagamento novo num
+  contrato cancelado não faz sentido, mesmo que a alocação
+  provavelmente já rejeitasse por falta de parcela elegível.
+
+**Alternativas descartadas:** permitir editar campos estruturais do
+contrato com regeração de cronograma (rejeitada pelo usuário — risco
+de desincronizar de pagamento já aplicado, escopo maior do que
+pedido); `DELETE` real quando não há pagamento nenhum no histórico
+(rejeitada pelo usuário — sempre desativar/cancelar, sem excecão);
+bloquear cancelamento de contrato 100% pago (não pedido — cancelar um
+contrato totalmente pago é inócuo, nenhuma parcela paga é tocada).
+
+**Consequências:** Primeiro teste de `application/` nos módulos
+`payers`/`contracts` (mesma exceção deliberada da decisão [33] pra
+`reset-password.test.ts` — regra de "excluir o próprio da checagem de
+duplicidade" é fácil de acertar errado silenciosamente). Verificado ao
+vivo contra Postgres real (script descartável, removido ao final):
+criar contrato de 3 parcelas, pagar a primeira, cancelar — parcela
+paga continua `paid`, as outras duas viram `cancelled`,
+`contracts.status = "cancelled"`; cancelar de novo devolve
+`already_cancelled`; editar metadado de pagador/contrato persiste;
+desativar/reativar pagador alterna `status` sem tocar `contracts`.
+`pnpm check` completo (lint + tipos + 344 testes) passa limpo. Reverter
+um cancelamento de contrato (reabrir) não foi pedido — se vier a ser
+necessário, é simétrico a "reativar" pagador, fica para quando pedido.

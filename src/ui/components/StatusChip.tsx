@@ -40,6 +40,10 @@ const STATUS = {
   // `psp_confirmed`, confirmação real do PSP). Aprovação humana na fila
   // de revisão continua sendo comprovante, não confirmação bancária.
   reviewed_approved: { label: "Aprovado na revisão", style: "border-line-strong text-content-primary" },
+  // `payers.status === "inactive"` — editar/desativar pagador. Mesma
+  // disciplina de baixa ênfase de `pending`/`unverified` (hairline +
+  // muted), nunca cor — desativado não é "erro", é estado administrativo.
+  inactive: { label: "Inativo", style: "border-line-hairline text-content-muted" },
 } as const;
 
 export function StatusChip({ status }: { status: keyof typeof STATUS }) {

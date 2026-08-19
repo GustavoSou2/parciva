@@ -325,9 +325,11 @@ export const ledgerEntries = pgTable("ledger_entries", {
 /**
  * Log de auditoria da decisão automática vs. revisão (spec §5.3/§6.6) —
  * Marco 4 do roadmap. Uma linha por tentativa de reconciliação de
- * `receipt`, `auto_applied` ou não. `risk_score` da spec original fica
- * de fora — o módulo de fraude (Fase 5) não existe ainda, não há dado
- * real pra essa coluna (ver DECISIONS.md).
+ * `receipt`, `auto_applied` ou não. `risk_score` (Fase 5, módulo `fraud`,
+ * 19/08/2026) só é preenchido quando a proposta passou por
+ * `executeReceiptPaymentTx` — fica `NULL` para os casos que nunca chegam
+ * lá (sem pagador/contrato identificado, `application/process-receipt-
+ * extraction.ts` → `reviewWithoutTarget`).
  */
 export const reconciliationProposals = pgTable("reconciliation_proposals", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -336,10 +338,32 @@ export const reconciliationProposals = pgTable("reconciliation_proposals", {
   paymentId: uuid("payment_id").references(() => payments.id),
   proposedAllocations: jsonb("proposed_allocations").notNull().default([]),
   confidence: numeric("confidence").notNull(), // mesmo padrão de receipt_extractions.overall_confidence
+  riskScore: numeric("risk_score"),
   decision: reconciliationDecisionEnum("decision").notNull(),
   reviewedBy: uuid("reviewed_by").references(() => users.id),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   reviewNote: text("review_note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const fraudCheckResultEnum = pgEnum("fraud_check_result", ["pass", "warn", "fail"]);
+
+/**
+ * Uma linha por check por comprovante avaliado (spec §5.2/§8) — só
+ * gravado dentro de `executeReceiptPaymentTx` (`reconciliation/infra/
+ * payment-repository.ts`), nunca para comprovante duplicado/quase-
+ * duplicado (esses são rejeitados em `ingestion/application/ingest-
+ * receipt.ts` ANTES de qualquer `receipts` row existir — sem `receiptId`
+ * pra referenciar aqui, design deliberado desde o Marco 5).
+ */
+export const fraudChecks = pgTable("fraud_checks", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  receiptId: uuid("receipt_id").notNull().references(() => receipts.id, { onDelete: "cascade" }),
+  checkCode: text("check_code").notNull(),
+  result: fraudCheckResultEnum("result").notNull(),
+  weight: numeric("weight").notNull(),
+  detail: jsonb("detail"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

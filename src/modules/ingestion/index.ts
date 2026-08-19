@@ -8,7 +8,7 @@ export type {
   ReceiptSource,
   FieldConfidence,
 } from "./domain/types";
-export { extractFromText } from "./domain/deterministic-extractor";
+export { extractFromText, extractE2eId } from "./domain/deterministic-extractor";
 export { computeHash, computePerceptualHash, PHASH_NEAR_DUPLICATE_MAX_DISTANCE } from "./domain/normalizer";
 export { runVlmExtraction } from "./infra/anthropic-vlm";
 export { extractTextFromImage } from "./infra/tesseract-ocr";

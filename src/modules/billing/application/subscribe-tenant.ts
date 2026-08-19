@@ -12,6 +12,12 @@
  * anterior confirmada), então os campos de dono são opcionais — só são
  * exigidos quando `getTenantBillingCustomerRef` devolve nulo (primeira
  * assinatura de verdade, com dono real preenchendo o formulário).
+ *
+ * Grava uma linha `pending` em `invoices` (histórico de faturas, spec
+ * §13.2 tela 7) sempre que o checkout é criado com sucesso — nunca antes
+ * disso, um erro de plano/dados de dono não é uma cobrança de verdade.
+ * `handle-billing-webhook.ts` atualiza essa mesma linha quando o
+ * pagamento é confirmado/reembolsado/disputado.
  */
 
 import type { Result } from "@/shared/result";
@@ -47,6 +53,13 @@ export interface SubscribeTenantDeps {
     completionUrl: string;
     metadata?: Record<string, unknown>;
   }): Promise<{ id: string; url: string }>;
+  recordInvoice(input: {
+    tenantId: string;
+    planCode: string;
+    providerRef: string;
+    amountCents: number;
+    status: "pending";
+  }): Promise<void>;
 }
 
 export type SubscribeTenantError = "plan_not_found" | "plan_not_billable" | "missing_owner_details";
@@ -98,6 +111,14 @@ export async function subscribeTenant(
     // próprio recurso (confirmado: a resposta de criação já devolve o
     // mesmo objeto que foi enviado).
     metadata: { tenantId: input.tenantId, planCode: input.planCode },
+  });
+
+  await deps.recordInvoice({
+    tenantId: input.tenantId,
+    planCode: input.planCode,
+    providerRef: checkout.id,
+    amountCents: plan.priceCents,
+    status: "pending",
   });
 
   return ok({ checkoutUrl: checkout.url });

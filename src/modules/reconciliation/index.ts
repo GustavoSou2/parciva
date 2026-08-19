@@ -32,9 +32,12 @@ export type { AutoApplyDecision, AutoApplyInput } from "./domain/auto-apply-deci
 export {
   executeManualPayment,
   executeReceiptPayment,
+  executeStatementPayment,
   executeReversal,
   listPaymentsByContract,
   approveReceiptProposal,
+  findPaymentByTransactionRef,
+  upgradeVerificationLevelToStatement,
 } from "./infra/payment-repository";
 export type {
   ReceiptPaymentInput,

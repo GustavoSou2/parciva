@@ -3,7 +3,12 @@
 import { redirect } from "next/navigation";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { formString } from "@/app/_lib/form-data";
-import { approveReceiptProposal, markProposalDecision, type PaymentMethod } from "@/modules/reconciliation";
+import {
+  approveReceiptProposal,
+  markProposalDecision,
+  type PaymentMethod,
+} from "@/modules/reconciliation";
+import { requirePermission } from "@/modules/identity";
 import { updateReceiptStatus } from "@/modules/ingestion";
 import { fromReais } from "@/shared/money";
 import { isErr } from "@/shared/result";
@@ -16,6 +21,14 @@ import { isErr } from "@/shared/result";
  * lock). `updateReceiptStatus` roda DEPOIS da transação de pagamento —
  * mesmo padrão de `receipt-worker.ts`: status de `receipts` é
  * side-effect, não parte da transação financeira.
+ *
+ * `receipts:approve` (não `payments:write`) — achado em 19/08/2026: esta
+ * action nunca checava permissão nenhuma, então qualquer membro do
+ * tenant, inclusive `viewer` (só leitura por design), conseguia aplicar
+ * pagamento real por aqui. `receipts:approve` já existia em
+ * `ROLE_PERMISSIONS` desde a fundação (spec: "Operador... aprova/
+ * rejeita, não mexe em contrato") — nunca tinha sido ligado a rota
+ * nenhuma até agora, mesma situação do CSRF antes da decisão [22].
  */
 export async function approveReviewAction(
   tenantSlug: string,
@@ -24,6 +37,9 @@ export async function approveReviewAction(
   formData: FormData,
 ): Promise<void> {
   const session = await requireTenantSession(tenantSlug);
+  if (isErr(requirePermission(session.role, "receipts:approve"))) {
+    redirect(`/t/${tenantSlug}/review/${proposalId}?error=unauthorized`);
+  }
   const ctx = { tenantId: session.tenantId };
 
   const payerId = formString(formData, "payerId");
@@ -67,6 +83,9 @@ export async function rejectReviewAction(
   formData: FormData,
 ): Promise<void> {
   const session = await requireTenantSession(tenantSlug);
+  if (isErr(requirePermission(session.role, "receipts:approve"))) {
+    redirect(`/t/${tenantSlug}/review/${proposalId}?error=unauthorized`);
+  }
   const ctx = { tenantId: session.tenantId };
   const reviewNote = formString(formData, "reviewNote").trim() || undefined;
 

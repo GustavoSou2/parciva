@@ -1,7 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { getDb, type TenantContext } from "@/db/client";
 import { payers } from "@/db/schema/financial";
-import type { Payer, ValidatedPayer } from "../domain/types";
+import type { Payer, PayerStatus, ValidatedPayer } from "../domain/types";
 
 function toPayer(row: typeof payers.$inferSelect): Payer {
   return {
@@ -47,6 +47,65 @@ export async function savePayer(
   );
   if (!row) throw new Error("Insert de payer não retornou linha — não deveria acontecer.");
   return { payerId: row.id };
+}
+
+/** Mesma checagem de `documentHashExists`, excluindo o próprio pagador — editar sem trocar o documento não deveria "colidir com si mesmo". */
+export async function documentHashExistsExcluding(
+  ctx: TenantContext,
+  hash: string,
+  excludePayerId: string,
+): Promise<boolean> {
+  const rows = await getDb(ctx, (db) =>
+    db
+      .select({ id: payers.id })
+      .from(payers)
+      .where(
+        and(
+          eq(payers.tenantId, ctx.tenantId),
+          eq(payers.documentHash, hash),
+          ne(payers.id, excludePayerId),
+        ),
+      )
+      .limit(1),
+  );
+  return rows.length > 0;
+}
+
+/** Nome "save*" de propósito (mesmo padrão de `savePayer`/`saveContractWithSchedule`/`saveTenant`) — infra sempre persiste, o verbo de domínio ("editar") fica no nome público de `application/update-payer.ts`. */
+export async function savePayerUpdate(
+  ctx: TenantContext,
+  payerId: string,
+  data: ValidatedPayer & { documentHash: string | null },
+): Promise<void> {
+  await getDb(ctx, (db) =>
+    db
+      .update(payers)
+      .set({
+        name: data.name,
+        documentType: data.documentType,
+        document: data.document,
+        documentHash: data.documentHash,
+        documentMasked: data.documentMasked,
+        phoneE164: data.phoneE164,
+        email: data.email,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(payers.tenantId, ctx.tenantId), eq(payers.id, payerId))),
+  );
+}
+
+/** Nunca DELETE — desativar/reativar é a única forma de "remover" um pagador (mesmo espírito de `payments.status: "reversed"`). Sem cascata pra `contracts`: nada no código hoje lê `payers.status`. */
+export async function setPayerStatus(
+  ctx: TenantContext,
+  payerId: string,
+  status: PayerStatus,
+): Promise<void> {
+  await getDb(ctx, (db) =>
+    db
+      .update(payers)
+      .set({ status, updatedAt: new Date() })
+      .where(and(eq(payers.tenantId, ctx.tenantId), eq(payers.id, payerId))),
+  );
 }
 
 export async function getPayerById(ctx: TenantContext, payerId: string): Promise<Payer | null> {

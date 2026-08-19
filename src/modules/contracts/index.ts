@@ -1,6 +1,10 @@
 // porta pública do módulo — só o que está aqui pode ser importado de fora.
 export { createContract } from "./application/create-contract";
 export type { CreateContractDeps, CreateContractError } from "./application/create-contract";
+export { updateContract } from "./application/update-contract";
+export type { UpdateContractDeps, UpdateContractError, UpdateContractInput } from "./application/update-contract";
+export { cancelContract } from "./application/cancel-contract";
+export type { CancelContractDeps, CancelContractError } from "./application/cancel-contract";
 export { generateMonthlySchedule } from "./domain/schedule";
 export type {
   Contract,
@@ -12,7 +16,10 @@ export type {
 } from "./domain/types";
 export {
   externalRefExists,
+  externalRefExistsExcluding,
   saveContractWithSchedule,
+  saveContractMetadata,
+  cancelContractTx,
   getContractById,
   getInstallmentById,
   listContracts,

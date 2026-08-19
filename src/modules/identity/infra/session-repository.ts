@@ -47,3 +47,8 @@ export async function getSessionByTokenHash(
 export async function deleteSession(tokenHash: string): Promise<void> {
   await getRootDb().delete(sessions).where(eq(sessions.id, tokenHash));
 }
+
+/** Usado por `reset-password.ts` — se a senha foi resetada (ex.: possível vazamento), sessões antigas não devem sobreviver. */
+export async function deleteAllSessionsForUser(userId: string): Promise<void> {
+  await getRootDb().delete(sessions).where(eq(sessions.userId, userId));
+}

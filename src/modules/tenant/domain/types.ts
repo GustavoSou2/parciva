@@ -11,6 +11,7 @@ export type TenantStatus = "trial" | "active" | "past_due" | "suspended" | "canc
 export type TransitionEvent =
   | "payment_confirmed"
   | "payment_failed"
+  | "payment_overdue"
   | "admin_suspend"
   | "admin_reactivate"
   | "cancel_requested"

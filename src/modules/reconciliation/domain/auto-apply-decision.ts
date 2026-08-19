@@ -1,17 +1,15 @@
 /**
  * Decisão de auto-aplicação — spec §6.6, ramo `origin=receipt`. Puro:
  * nenhuma condição aqui consulta banco; tudo já chega calculado por
- * quem orquestra (`application/process-receipt-extraction.ts`).
+ * quem orquestra (`infra/payment-repository.ts`, dentro da mesma
+ * transação que trava as parcelas e roda `@/modules/fraud`).
  *
  * Risco/fraude (spec: "risk_score abaixo do limiar", "nenhum
- * fraud_check com resultado fail") é NO-OP documentado neste marco —
- * o módulo de fraude é da Fase 5 e não existe ainda. Isso simplifica
- * o invariante 5 do CLAUDE.md ("na dúvida, revisão humana"): as outras
- * condições abaixo continuam valendo de verdade, então nenhuma
- * auto-aplicação acontece sem confiança alta, identificação forte,
- * alocação exata e valor dentro do teto — só não há um sinal de risco
- * adicional para reforçar ainda mais a barreira. Decisão confirmada
- * com o usuário; ver PROGRESS.md/DECISIONS.md.
+ * fraud_check com resultado fail") deixou de ser no-op em 19/08/2026
+ * (Fase 5, primeira fatia — DECISIONS.md) — `blocksAutoApply` já vem
+ * pronto de `@/modules/fraud` (`evaluateFraudChecks`); esta função não
+ * precisa saber de score nem peso, só do resultado final, mesmo padrão
+ * das outras condições abaixo.
  *
  * Qualquer condição que falhe cai em `needs_review` — nunca em
  * `rejected` sozinho (spec: "nunca rejeitar automaticamente sem
@@ -35,13 +33,16 @@ export interface AutoApplyInput {
   readonly referenceDate: Date;
   readonly amountCents: Money;
   readonly ceilingCents: Money;
+  /** Vem de `evaluateFraudChecks(...).blocksAutoApply` (`@/modules/fraud`) — score alto ou check de peso alto (`e2e_reuse`) reprovado. */
+  readonly blocksAutoApply: boolean;
 }
 
 export type AutoApplyDecision = "auto_applied" | "needs_review";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-function isPlausibleDate(paidAt: Date, referenceDate: Date): boolean {
+/** Exportada (mesmo módulo) pra `infra/payment-repository.ts` reusar o mesmo cálculo ao montar `FraudSignals` — nunca duplicar a lógica de dias. */
+export function isPlausibleDate(paidAt: Date, referenceDate: Date): boolean {
   const diffMs = referenceDate.getTime() - paidAt.getTime();
   if (diffMs < 0) return false; // futuro
   return diffMs <= MAX_PAST_DAYS * MS_PER_DAY;
@@ -60,6 +61,7 @@ export function decideAutoApply(input: AutoApplyInput): AutoApplyDecision {
   if (!isZero(input.remainingCents)) return "needs_review";
   if (!isPlausibleDate(input.paidAt, input.referenceDate)) return "needs_review";
   if (input.amountCents > input.ceilingCents) return "needs_review";
+  if (input.blocksAutoApply) return "needs_review";
 
   return "auto_applied";
 }

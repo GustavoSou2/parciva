@@ -1,18 +1,21 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { getContractById, listInstallmentsByContract } from "@/modules/contracts";
 import { getPayerById } from "@/modules/payers";
 import { listEntriesForContract } from "@/modules/ledger";
 import { listPaymentsByContract } from "@/modules/reconciliation";
+import { requirePermission } from "@/modules/identity";
+import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Field } from "@/ui/components/Field";
 import { Input, Select } from "@/ui/components/Input";
-import { Button } from "@/ui/components/Button";
+import { Button, buttonClassName } from "@/ui/components/Button";
 import { ErrorNote } from "@/ui/components/ErrorNote";
 import { Money } from "@/ui/components/Money";
 import { StatusChip } from "@/ui/components/StatusChip";
-import { registerPaymentAction, reversePaymentAction } from "../actions";
+import { cancelContractAction, registerPaymentAction, reversePaymentAction } from "../actions";
 
 /**
  * `payments.verification_level` (decisão [5]) só tem chip pra
@@ -31,6 +34,8 @@ const PAYMENT_ERROR_LABELS: Record<string, string> = {
   duplicate_transaction: "Já existe um pagamento com essa referência — provável duplicidade.",
   payment_not_found: "Pagamento não encontrado.",
   already_reversed: "Este pagamento já foi estornado.",
+  unauthorized: "Você não tem permissão para registrar ou reverter pagamentos.",
+  already_cancelled: "Este contrato já foi cancelado.",
 };
 
 export default async function ContractDetailPage({
@@ -42,6 +47,8 @@ export default async function ContractDetailPage({
 }) {
   const { tenantSlug, contractId } = await params;
   const session = await requireTenantSession(tenantSlug);
+  const canWrite = !isErr(requirePermission(session.role, "payments:write"));
+  const canWriteContract = !isErr(requirePermission(session.role, "contracts:write"));
   const ctx = { tenantId: session.tenantId };
   const { error } = await searchParams;
 
@@ -56,12 +63,35 @@ export default async function ContractDetailPage({
   ]);
 
   const registerPayment = registerPaymentAction.bind(null, tenantSlug, contractId, contract.payerId);
+  const cancelContract = cancelContractAction.bind(null, tenantSlug, contractId);
+  const isContractActive = contract.status !== "cancelled";
 
   return (
     <>
-      <Eyebrow>Contrato</Eyebrow>
+      <div className="flex items-center justify-between">
+        <Eyebrow>Contrato</Eyebrow>
+        {canWriteContract && (
+          <div className="flex gap-2">
+            <Link
+              href={`/t/${tenantSlug}/contracts/${contractId}/edit`}
+              className={buttonClassName("secondary")}
+            >
+              Editar
+            </Link>
+            {isContractActive && (
+              <form action={cancelContract}>
+                <Button type="submit" variant="secondary">
+                  Cancelar contrato
+                </Button>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
       <Card>
-        <p className="text-title text-content-primary">{payer?.name ?? "Pagador"}</p>
+        <p className="text-title text-content-primary">
+          {payer?.name ?? "Pagador"} {!isContractActive && <StatusChip status="cancelled" />}
+        </p>
         <p className="mt-1 text-body text-content-secondary">{contract.description ?? "Sem descrição"}</p>
         <p className="mt-3 font-num text-metric text-content-primary tabular-nums">
           <Money value={contract.principalCents} />
@@ -100,35 +130,39 @@ export default async function ContractDetailPage({
         </table>
       </Card>
 
-      <Eyebrow>Registrar pagamento manual</Eyebrow>
-      <Card>
-        <form action={registerPayment} className="flex flex-col gap-card-gap">
-          <Field label="Valor (R$)">
-            <Input name="amount" required placeholder="150,00" />
-          </Field>
-          <Field label="Forma">
-            <Select name="method" defaultValue="pix">
-              <option value="pix">PIX</option>
-              <option value="ted">TED</option>
-              <option value="boleto">Boleto</option>
-              <option value="cash">Dinheiro</option>
-              <option value="card">Cartão</option>
-              <option value="other">Outro</option>
-            </Select>
-          </Field>
-          <Field label="Referência da transação (opcional — E2E ID do PIX, por exemplo)">
-            <Input name="transactionRef" />
-          </Field>
-          {error && (
-            <ErrorNote>
-              {PAYMENT_ERROR_LABELS[error] ?? "Não foi possível registrar o pagamento."}
-            </ErrorNote>
-          )}
-          <Button type="submit" className="self-start">
-            Registrar
-          </Button>
-        </form>
-      </Card>
+      {canWrite && isContractActive && (
+        <>
+          <Eyebrow>Registrar pagamento manual</Eyebrow>
+          <Card>
+            <form action={registerPayment} className="flex flex-col gap-card-gap">
+              <Field label="Valor (R$)">
+                <Input name="amount" required placeholder="150,00" />
+              </Field>
+              <Field label="Forma">
+                <Select name="method" defaultValue="pix">
+                  <option value="pix">PIX</option>
+                  <option value="ted">TED</option>
+                  <option value="boleto">Boleto</option>
+                  <option value="cash">Dinheiro</option>
+                  <option value="card">Cartão</option>
+                  <option value="other">Outro</option>
+                </Select>
+              </Field>
+              <Field label="Referência da transação (opcional — E2E ID do PIX, por exemplo)">
+                <Input name="transactionRef" />
+              </Field>
+              {error && (
+                <ErrorNote>
+                  {PAYMENT_ERROR_LABELS[error] ?? "Não foi possível registrar o pagamento."}
+                </ErrorNote>
+              )}
+              <Button type="submit" className="self-start">
+                Registrar
+              </Button>
+            </form>
+          </Card>
+        </>
+      )}
 
       <Eyebrow>Pagamentos</Eyebrow>
       <Card>
@@ -167,7 +201,7 @@ export default async function ContractDetailPage({
                       />
                     </td>
                     <td className="py-2">
-                      {payment.status === "applied" && (
+                      {payment.status === "applied" && canWrite && (
                         <form action={reverse}>
                           <Button type="submit" variant="secondary">
                             Reverter

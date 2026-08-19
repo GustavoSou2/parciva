@@ -2,9 +2,13 @@
  * Convite de usuário — spec §14 Fase 0. Protegido em duas camadas:
  * `src/middleware.ts` (Edge, só checa presença do cookie) e aqui
  * (Node, valida sessão de verdade + resolve tenant pelo slug do corpo
- * + RBAC via `hasPermission`). Link de convite só é logado (dev) — sem
- * provedor de e-mail configurado ainda, ver `identity/application/
- * invite-user.ts`.
+ * + RBAC via `hasPermission`). Provedor real (Resend) desde
+ * 19/08/2026 — o link continua sendo logado sempre, mesmo com envio
+ * real configurado: única forma de testar sem depender de caixa de
+ * entrada real, e sem conta Resend criada ainda (pendência,
+ * DECISIONS.md) é a única confirmação disponível.
+ * `identity/application/invite-user.ts` já trata o envio como
+ * best-effort (try/catch) — não precisa de outro aqui.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -25,6 +29,7 @@ import {
 } from "@/modules/identity";
 import { isErr } from "@/shared/result";
 import { logger } from "@/shared/logger";
+import { sendEmail } from "@/shared/email";
 import { SESSION_COOKIE_NAME } from "@/shared/session-cookie";
 
 const CSRF_HEADER_NAME = "x-csrf-token";
@@ -33,6 +38,12 @@ function sessionSecret(): string {
   const secret = process.env.SESSION_SECRET;
   if (!secret) throw new Error("SESSION_SECRET não configurado.");
   return secret;
+}
+
+function appBaseUrl(): string {
+  const url = process.env.APP_BASE_URL;
+  if (!url) throw new Error("APP_BASE_URL não configurado.");
+  return url;
 }
 
 export const runtime = "nodejs";
@@ -93,14 +104,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       createInvitedUser: (email, name) => createUser({ email, name, status: "invited" }),
       createMembership: (userId, role, invitedBy) => createMembership(ctx, userId, role, invitedBy),
       createInviteToken: (userId) => createInviteToken(userId, ctx.tenantId),
-      sendInviteEmail: (email, rawToken) => {
-        // Sem provedor de e-mail configurado — loga o link (dev). Ver
-        // identity/application/invite-user.ts (best-effort, mesma
-        // situação de sendWelcomeEmail em tenant/create-tenant.ts).
-        // O token cru É a informação (não um vazamento a redigir): é o
-        // único jeito de testar o fluxo de convite manualmente hoje.
-        logger.info("link de convite (sem provedor de e-mail real)", { email, link: `/invite/${rawToken}` });
-        return Promise.resolve();
+      sendInviteEmail: async (email, rawToken) => {
+        // O token cru É a informação (não um vazamento a redigir) — é o
+        // único jeito de testar o fluxo sem depender de caixa de
+        // entrada real, ainda mais sem conta Resend criada (pendência).
+        logger.info("link de convite", { email, link: `/invite/${rawToken}` });
+        await sendEmail({
+          to: email,
+          subject: "Você foi convidado para a Parciva",
+          html: `<p>Você foi convidado a entrar na Parciva.</p><p><a href="${appBaseUrl()}/invite/${rawToken}">Aceitar convite</a></p>`,
+        });
       },
     },
   );

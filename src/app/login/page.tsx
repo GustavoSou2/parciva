@@ -14,6 +14,7 @@
  */
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Field } from "@/ui/components/Field";
@@ -110,6 +111,11 @@ export default function LoginPage() {
             <Button type="submit" disabled={loading}>
               {loading ? "Entrando..." : "Entrar"}
             </Button>
+            <p className="text-body text-content-secondary">
+              <Link href="/forgot-password" className="text-content-primary hover:underline">
+                Esqueceu a senha?
+              </Link>
+            </p>
           </form>
         </Card>
       )}

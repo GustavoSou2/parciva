@@ -15,6 +15,7 @@ import { getRootDb, type TenantContext } from "@/db/client";
 import { plans, tenants } from "@/db/schema/tenancy";
 import { money, type Money } from "@/shared/money";
 import { logger } from "@/shared/logger";
+import { sendEmail } from "@/shared/email";
 import type { PlanLimits } from "@/modules/billing";
 import { createMembership, createUser, type MembershipRole } from "@/modules/identity";
 import type { NewTenant, NewUser } from "../application/create-tenant";
@@ -60,8 +61,19 @@ export async function getTenantStatus(tenantId: string): Promise<TenantStatus | 
   return rows[0]?.status ?? null;
 }
 
+/**
+ * `suspendedAt` (coluna existente desde a fundação, nunca escrita até o
+ * cron de dunning) é gravado aqui sempre que o novo status é
+ * `"suspended"` — vale tanto pra suspensão automática (`payment_overdue`)
+ * quanto pra uma futura suspensão manual (`admin_suspend`), sem precisar
+ * de um segundo ponto de escrita.
+ */
 export async function setTenantStatus(tenantId: string, status: TenantStatus): Promise<void> {
-  await getRootDb().update(tenants).set({ status, updatedAt: new Date() }).where(eq(tenants.id, tenantId));
+  const now = new Date();
+  await getRootDb()
+    .update(tenants)
+    .set({ status, updatedAt: now, ...(status === "suspended" ? { suspendedAt: now } : {}) })
+    .where(eq(tenants.id, tenantId));
 }
 
 export interface TenantBillingSummary {
@@ -115,10 +127,20 @@ export async function saveMembership(
   await createMembership(ctx, userId, role, null, new Date());
 }
 
-export function sendWelcomeEmail(email: string, name: string): Promise<void> {
-  // Sem provedor de e-mail configurado no projeto ainda (mesma situação
-  // do convite, ver identity/application/invite-user.ts) — loga em vez
-  // de enviar, pronto pra plugar um provedor depois.
-  logger.info("e-mail de boas-vindas (stub, não enviado de verdade)", { name, email });
-  return Promise.resolve();
+/**
+ * Provedor real (Resend, `@/shared/email.ts`) desde 19/08/2026 — antes
+ * só logava o link (dev). Loga sempre, mesmo com envio real
+ * configurado: é a única forma de testar o fluxo sem depender da
+ * entrega chegar numa caixa de entrada real, e sem conta Resend criada
+ * ainda (pendência, DECISIONS.md) é a ÚNICA confirmação disponível.
+ * `create-tenant.ts` já trata isto como best-effort (try/catch) — não
+ * precisa de outro aqui.
+ */
+export async function sendWelcomeEmail(email: string, name: string): Promise<void> {
+  logger.info("e-mail de boas-vindas", { name, email });
+  await sendEmail({
+    to: email,
+    subject: "Bem-vindo à Parciva",
+    html: `<p>Olá, ${name}!</p><p>Sua conta na Parciva foi criada com sucesso.</p>`,
+  });
 }

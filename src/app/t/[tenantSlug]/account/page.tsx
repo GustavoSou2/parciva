@@ -1,7 +1,13 @@
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { requirePermission } from "@/modules/identity";
 import { getTenantBillingSummary } from "@/modules/tenant";
-import { getPlanByCode, getSubscriptionByTenant, getTenantBillingCustomerRef } from "@/modules/billing";
+import {
+  getPlanByCode,
+  getSubscriptionByTenant,
+  getTenantBillingCustomerRef,
+  listInvoicesByTenant,
+  type InvoiceStatus,
+} from "@/modules/billing";
 import { money } from "@/shared/money";
 import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
@@ -27,6 +33,13 @@ const TENANT_STATUS_LABEL: Record<string, string> = {
   past_due: "Pagamento pendente",
   suspended: "Suspenso",
   cancelled: "Cancelado",
+};
+
+const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
+  pending: "Pendente",
+  paid: "Pago",
+  failed: "Falhou",
+  refunded: "Reembolsado",
 };
 
 const ERROR_LABELS: Record<string, string> = {
@@ -67,11 +80,12 @@ export default async function AccountPage({
 
   const canWrite = !isErr(requirePermission(session.role, "billing:write"));
 
-  const [summary, subscription, billingCustomerRef, plans] = await Promise.all([
+  const [summary, subscription, billingCustomerRef, plans, invoices] = await Promise.all([
     getTenantBillingSummary(session.tenantId),
     getSubscriptionByTenant(session.tenantId),
     getTenantBillingCustomerRef(session.tenantId),
     Promise.all(BILLABLE_PLANS.map(async (p) => ({ ...p, plan: await getPlanByCode(p.code) }))),
+    listInvoicesByTenant(session.tenantId),
   ]);
 
   const needsBillingDetails = !billingCustomerRef;
@@ -95,6 +109,22 @@ export default async function AccountPage({
           </p>
         )}
       </Card>
+
+      {invoices.length > 0 && (
+        <Card className="flex flex-col gap-2">
+          <Eyebrow>Histórico de cobrança</Eyebrow>
+          {invoices.map((invoice) => (
+            <div key={invoice.id} className="flex justify-between border-t border-line-hairline pt-2 first:border-t-0 first:pt-0">
+              <span className="text-body text-content-secondary">
+                {formatDate(invoice.createdAt)} · {invoice.planCode}
+              </span>
+              <span className="text-body text-content-primary">
+                <Money value={money(invoice.amountCents)} /> · {INVOICE_STATUS_LABEL[invoice.status]}
+              </span>
+            </div>
+          ))}
+        </Card>
+      )}
 
       {error && <ErrorNote>{ERROR_LABELS[error] ?? "Não foi possível concluir a operação."}</ErrorNote>}
 

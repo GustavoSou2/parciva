@@ -16,6 +16,7 @@ import {
   getTenantBillingCustomerRef,
   markSubscriptionCancelled,
   markSubscriptionPastDue,
+  recordInvoice,
   renewDueSubscriptions,
   saveAbacatePayProductId,
   saveTenantBillingCustomerRef,
@@ -64,6 +65,7 @@ function buildDeps(): RenewSubscriptionsDeps {
         createProduct,
         createCustomer,
         createCheckout,
+        recordInvoice,
       }),
   };
 }
@@ -81,6 +83,9 @@ async function processBillingRenewalJob(): Promise<void> {
   for (const result of results) {
     if (result.outcome === "renewal_failed") {
       logger.error("renovação de assinatura falhou", { tenantId: result.tenantId });
+    }
+    if (result.outcome === "suspended") {
+      logger.warn("tenant suspenso por dunning (past_due > 7 dias)", { tenantId: result.tenantId });
     }
   }
 }

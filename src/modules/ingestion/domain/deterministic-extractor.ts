@@ -40,6 +40,11 @@ const ISPB_INSTITUTIONS: Readonly<Record<string, string>> = {
   "10573521": "Mercado Pago",
 };
 
+/** Exportada — reusada por `@/modules/statements` pra achar o E2E id na descrição de uma linha de extrato, sem duplicar o regex. */
+export function extractE2eId(text: string): string | null {
+  return E2E_ID_REGEX.exec(text)?.[0] ?? null;
+}
+
 function extractTransactionRefAndInstitution(text: string): Partial<ExtractionOutput> {
   const match = E2E_ID_REGEX.exec(text);
   if (!match) return {};

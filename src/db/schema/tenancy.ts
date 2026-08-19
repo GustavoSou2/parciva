@@ -109,6 +109,19 @@ export const inviteTokens = pgTable("invite_tokens", {
 });
 
 /**
+ * Token de "esqueci minha senha" — mesmo raciocínio de `invite_tokens`
+ * (`id` é hash, não o token bruto), mas sem `tenant_id`: reset de senha
+ * não é por tenant, é por usuário. Também raiz — resolver o token
+ * precisa acontecer antes de existir sessão ou tenant.
+ */
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: text("id").primaryKey(), // hash do token, não o token
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+/**
  * Une usuário a tenant com um papel. É esta tabela que a RLS de
  * `memberships` e as policies das tabelas de domínio consultam para
  * decidir se um usuário pode agir num tenant — ver 0001_rls.sql.
@@ -163,6 +176,32 @@ export const subscriptions = pgTable("subscriptions", {
   cancelAt: timestamp("cancel_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const invoiceStatusEnum = pgEnum("invoice_status", ["pending", "paid", "failed", "refunded"]);
+
+/**
+ * Histórico de cobrança do Parciva↔tenant (spec §13.2 tela 7, "faturas") —
+ * distinto de `subscriptions`, que guarda só a linha "atual" por tenant
+ * (sobrescrita a cada ciclo, nunca histórico de verdade apesar do
+ * comentário abaixo dizer o contrário). Uma linha por cobrança PIX
+ * gerada (`billing/application/subscribe-tenant.ts`), atualizada quando
+ * o webhook da AbacatePay confirma/reembolsa/disputa
+ * (`handle-billing-webhook.ts`). `planCode` é denormalizado de propósito
+ * — a fatura mostra o plano de QUANDO foi cobrada, não o plano atual do
+ * tenant.
+ */
+export const invoices = pgTable("invoices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  planCode: text("plan_code").notNull(),
+  providerRef: text("provider_ref").notNull(), // id do checkout na AbacatePay
+  amountCents: integer("amount_cents").notNull(),
+  status: invoiceStatusEnum("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+}, (t) => ({
+  providerRefUnique: uniqueIndex("invoices_provider_ref_unique").on(t.providerRef),
+}));
 
 export const usageCounters = pgTable("usage_counters", {
   id: uuid("id").primaryKey().defaultRandom(),

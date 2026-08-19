@@ -46,6 +46,7 @@ export default async function ReviewQueuePage({
                 <th className="pb-2 font-medium">Pagador (extraído)</th>
                 <th className="pb-2 font-medium">Valor (extraído)</th>
                 <th className="pb-2 font-medium">Confiança</th>
+                <th className="pb-2 font-medium">Risco</th>
                 <th className="pb-2 font-medium">Status</th>
                 <th className="pb-2"></th>
               </tr>
@@ -69,6 +70,9 @@ export default async function ReviewQueuePage({
                   </td>
                   <td className="py-2 font-num text-content-secondary tabular-nums">
                     {(proposal.confidence * 100).toFixed(0)}%
+                  </td>
+                  <td className="py-2 font-num text-content-secondary tabular-nums">
+                    {proposal.riskScore != null ? proposal.riskScore.toFixed(0) : "—"}
                   </td>
                   <td className="py-2">
                     <StatusChip status="review" />

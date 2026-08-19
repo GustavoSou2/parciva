@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { listPayers } from "@/modules/payers";
+import { requirePermission } from "@/modules/identity";
+import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Field } from "@/ui/components/Field";
@@ -14,6 +16,7 @@ const ERROR_LABELS: Record<string, string> = {
   invalid_installments_count: "Número de parcelas inválido.",
   invalid_start_date: "Data de início inválida.",
   duplicate_external_ref: "Já existe um contrato com essa referência.",
+  unauthorized: "Você não tem permissão para criar contratos.",
 };
 
 export default async function NewContractPage({
@@ -25,6 +28,7 @@ export default async function NewContractPage({
 }) {
   const { tenantSlug } = await params;
   const session = await requireTenantSession(tenantSlug);
+  const canWrite = !isErr(requirePermission(session.role, "contracts:write"));
   const { error } = await searchParams;
   const payers = await listPayers({ tenantId: session.tenantId });
   const boundAction = createContractAction.bind(null, tenantSlug);
@@ -33,7 +37,9 @@ export default async function NewContractPage({
     <>
       <Eyebrow>Novo contrato</Eyebrow>
       <Card>
-        {payers.length === 0 ? (
+        {!canWrite ? (
+          <p className="text-body text-content-muted">Sem permissão para criar contratos neste tenant.</p>
+        ) : payers.length === 0 ? (
           <p className="text-body text-content-muted">
             Nenhum pagador cadastrado ainda —{" "}
             <Link href={`/t/${tenantSlug}/payers/new`} className="text-content-primary hover:underline">

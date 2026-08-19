@@ -12,6 +12,7 @@ import {
   getPlanByCode,
   getSubscriptionByTenant,
   getTenantBillingCustomerRef,
+  recordInvoice,
   saveAbacatePayProductId,
   saveTenantBillingCustomerRef,
   scheduleSubscriptionCancellation,
@@ -77,6 +78,7 @@ export async function subscribeAction(
       createProduct,
       createCustomer,
       createCheckout,
+      recordInvoice,
     },
   );
 

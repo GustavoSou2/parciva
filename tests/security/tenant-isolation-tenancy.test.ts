@@ -4,6 +4,10 @@
  * `usage_counters`, `audit_logs`. `plans`/`users` são tabelas raiz (sem
  * `tenant_id`, fora da RLS por design — `src/db/schema/tenancy.ts`), só
  * servem de dependência de FK aqui.
+ *
+ * `invoices` (histórico de faturas, fechamento do resto da Fase 4) foi
+ * adicionada aqui depois, mesmo padrão de RLS das outras — não tem marco
+ * próprio.
  */
 
 import { randomUUID } from "node:crypto";
@@ -11,7 +15,7 @@ import { eq, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getDb, getRootDb, getUserDb } from "@/db/client";
 import { getAdminDb } from "@/db/admin-client";
-import { tenants, plans, memberships, subscriptions, usageCounters, auditLogs } from "@/db/schema/tenancy";
+import { tenants, plans, memberships, subscriptions, usageCounters, auditLogs, invoices } from "@/db/schema/tenancy";
 import { createUser, createMembership, listMembershipsForUser } from "@/modules/identity";
 
 function firstOrThrow<T>(rows: readonly T[]): T {
@@ -29,6 +33,8 @@ let membershipAId: string;
 let membershipBId: string;
 let subscriptionAId: string;
 let subscriptionBId: string;
+let invoiceAId: string;
+let invoiceBId: string;
 let usageCounterAId: string;
 let usageCounterBId: string;
 let auditLogAId: string;
@@ -117,6 +123,25 @@ beforeAll(async () => {
   );
   subscriptionAId = subscriptionA.id;
   subscriptionBId = subscriptionB.id;
+
+  const invoiceA = firstOrThrow(
+    await getDb(ctxA, (db) =>
+      db
+        .insert(invoices)
+        .values({ tenantId: tenantAId, planCode: "essential", providerRef: `bill-a-${randomUUID()}`, amountCents: 9900 })
+        .returning({ id: invoices.id }),
+    ),
+  );
+  const invoiceB = firstOrThrow(
+    await getDb(ctxB, (db) =>
+      db
+        .insert(invoices)
+        .values({ tenantId: tenantBId, planCode: "essential", providerRef: `bill-b-${randomUUID()}`, amountCents: 9900 })
+        .returning({ id: invoices.id }),
+    ),
+  );
+  invoiceAId = invoiceA.id;
+  invoiceBId = invoiceB.id;
 
   const usageCounterA = firstOrThrow(
     await getDb(ctxA, (db) =>
@@ -273,6 +298,38 @@ describe("isolamento cross-tenant — subscriptions", () => {
           provider: "manual",
           currentPeriodStart: now,
           currentPeriodEnd: now,
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+});
+
+describe("isolamento cross-tenant — invoices", () => {
+  it("sessão do tenant A só enxerga a própria fatura no SELECT geral", async () => {
+    const ctxA = { tenantId: tenantAId };
+    const rows = await getDb(ctxA, (db) => db.select({ id: invoices.id }).from(invoices));
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain(invoiceAId);
+    expect(ids).not.toContain(invoiceBId);
+  });
+
+  it("sessão do tenant A não enxerga a fatura do tenant B mesmo pelo id direto", async () => {
+    const ctxA = { tenantId: tenantAId };
+    const rows = await getDb(ctxA, (db) =>
+      db.select({ id: invoices.id }).from(invoices).where(eq(invoices.id, invoiceBId)),
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it("banco recusa INSERT em invoices com tenant_id que não bate com app.tenant_id", async () => {
+    const ctxA = { tenantId: tenantAId };
+    await expect(
+      getDb(ctxA, (db) =>
+        db.insert(invoices).values({
+          tenantId: tenantBId,
+          planCode: "essential",
+          providerRef: `bill-intruso-${randomUUID()}`,
+          amountCents: 9900,
         }),
       ),
     ).rejects.toThrow();

@@ -19,6 +19,17 @@
  * A cobrança só é criada ANTES de qualquer mudança de status — se a
  * chamada à AbacatePay falhar (rede, API fora), o tenant continua
  * exatamente como estava, sem punir o cliente por uma falha nossa.
+ *
+ * Dunning (decisão do usuário: 7 dias de tolerância) — `past_due` que
+ * não voltou a `active` em `DUNNING_TOLERANCE_DAYS` é suspenso
+ * automaticamente. Ancorado em `subscription.currentPeriodEnd`: nada
+ * avança esse campo enquanto a assinatura está `past_due` (só o webhook,
+ * ao confirmar pagamento, move pra frente via `nextPeriod()`), então ele
+ * já é "desde quando está vencido" — não precisa de coluna nova. A
+ * guarda contra suspender de novo em dias seguintes é a própria validade
+ * da transição (`transition("suspended", "payment_overdue")` é inválida),
+ * mesmo espírito de defesa em profundidade das duas guardas já descritas
+ * acima para o caminho de renovação.
  */
 
 import type { TenantStatus, TransitionEvent } from "@/modules/tenant";
@@ -55,6 +66,7 @@ export type RenewalOutcome =
   | "cancelled"
   | "renewal_created"
   | "renewal_failed"
+  | "suspended"
   | "skipped";
 
 export interface RenewalResult {
@@ -64,6 +76,11 @@ export interface RenewalResult {
 
 const PAYMENT_FAILED: TransitionEvent = "payment_failed";
 const CANCEL_REQUESTED: TransitionEvent = "cancel_requested";
+const PAYMENT_OVERDUE: TransitionEvent = "payment_overdue";
+
+/** Decisão do usuário (não da spec) — dias em `past_due` antes de suspender automaticamente. */
+const DUNNING_TOLERANCE_DAYS = 7;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 async function finalizeCancellation(
   tenantId: string,
@@ -108,6 +125,30 @@ async function renewCycle(
   return "renewal_created";
 }
 
+/**
+ * Suspensão automática por dunning — `past_due` há `DUNNING_TOLERANCE_
+ * DAYS` dias ou mais vira `suspended`. `transition` é a guarda contra
+ * repetir a suspensão em dias seguintes: uma vez `suspended`, o evento
+ * não tem destino válido, então isto devolve `"skipped"` sem tocar em
+ * nada.
+ */
+async function suspendIfOverdue(
+  tenantId: string,
+  tenantStatus: TenantStatus,
+  subscription: SubscriptionDue,
+  now: Date,
+  deps: RenewSubscriptionsDeps,
+): Promise<RenewalOutcome> {
+  const overdueDays = (now.getTime() - subscription.currentPeriodEnd.getTime()) / MS_PER_DAY;
+  if (overdueDays < DUNNING_TOLERANCE_DAYS) return "skipped";
+
+  const transitionResult = transition(tenantStatus, PAYMENT_OVERDUE);
+  if (isErr(transitionResult)) return "skipped";
+
+  await deps.setTenantStatus(tenantId, transitionResult.value);
+  return "suspended";
+}
+
 export async function renewDueSubscriptions(
   now: Date,
   appBaseUrl: string,
@@ -118,7 +159,7 @@ export async function renewDueSubscriptions(
 
   for (const tenantId of tenantIds) {
     const subscription = await deps.getSubscriptionByTenant(tenantId);
-    if (!subscription || subscription.status !== "active" || subscription.currentPeriodEnd > now) {
+    if (!subscription) {
       results.push({ tenantId, outcome: "skipped" });
       continue;
     }
@@ -129,10 +170,20 @@ export async function renewDueSubscriptions(
       continue;
     }
 
-    const outcome =
-      subscription.cancelAt && subscription.cancelAt <= now
-        ? await finalizeCancellation(tenantId, tenantStatus, deps)
-        : await renewCycle(tenantId, tenantStatus, subscription, appBaseUrl, deps);
+    let outcome: RenewalOutcome;
+    if (subscription.cancelAt && subscription.cancelAt <= now) {
+      // Também cobre cancelamento pedido enquanto já `past_due` — antes
+      // desta mudança, esse caso nunca era revisitado pelo cron (o gate
+      // original exigia `status === "active"`), então um pedido de
+      // cancelamento feito durante `past_due` ficava preso pra sempre.
+      outcome = await finalizeCancellation(tenantId, tenantStatus, deps);
+    } else if (subscription.status === "active" && subscription.currentPeriodEnd <= now) {
+      outcome = await renewCycle(tenantId, tenantStatus, subscription, appBaseUrl, deps);
+    } else if (subscription.status === "past_due") {
+      outcome = await suspendIfOverdue(tenantId, tenantStatus, subscription, now, deps);
+    } else {
+      outcome = "skipped";
+    }
 
     results.push({ tenantId, outcome });
   }

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { listPayers } from "@/modules/payers";
+import { requirePermission } from "@/modules/identity";
+import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { buttonClassName } from "@/ui/components/Button";
@@ -12,15 +14,18 @@ export default async function PayersPage({
 }) {
   const { tenantSlug } = await params;
   const session = await requireTenantSession(tenantSlug);
+  const canWrite = !isErr(requirePermission(session.role, "contracts:write"));
   const payers = await listPayers({ tenantId: session.tenantId });
 
   return (
     <>
       <div className="flex items-center justify-between">
         <Eyebrow>Pagadores</Eyebrow>
-        <Link href={`/t/${tenantSlug}/payers/new`} className={buttonClassName("secondary")}>
-          Novo pagador
-        </Link>
+        {canWrite && (
+          <Link href={`/t/${tenantSlug}/payers/new`} className={buttonClassName("secondary")}>
+            Novo pagador
+          </Link>
+        )}
       </div>
       <Card>
         {payers.length === 0 ? (

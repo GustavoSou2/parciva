@@ -6,6 +6,7 @@ import type { TransitionEvent } from "./types";
 const ALL_EVENTS: TransitionEvent[] = [
   "payment_confirmed",
   "payment_failed",
+  "payment_overdue",
   "admin_suspend",
   "admin_reactivate",
   "cancel_requested",
@@ -26,6 +27,11 @@ describe("transition", () => {
   it("past_due + payment_confirmed → active", () => {
     const result = transition("past_due", "payment_confirmed");
     expect(result).toEqual({ ok: true, value: "active" });
+  });
+
+  it("past_due + payment_overdue → suspended (dunning automático)", () => {
+    const result = transition("past_due", "payment_overdue");
+    expect(result).toEqual({ ok: true, value: "suspended" });
   });
 
   it("suspended + admin_reactivate → active", () => {

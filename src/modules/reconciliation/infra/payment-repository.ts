@@ -20,11 +20,12 @@
  * Import direto de `@/db/schema/financial` (não de `modules/x/infra`
  * de outro módulo) é deliberado aqui: uma transação que atravessa
  * várias tabelas é a exceção que justifica a exceção — só
- * `lockInstallmentsByContractTx`/`updateInstallmentTx` (contracts) e
- * `writeEntryTx` (ledger) são reusados via seus `index.ts` públicos,
- * porque cada um carrega regra própria (o cálculo de status/estorno de
- * `installments`, e o formato/`rule_version` do ledger) que não deve
- * ser duplicada aqui.
+ * `lockInstallmentsByContractTx`/`updateInstallmentTx` (contracts),
+ * `writeEntryTx` (ledger) e `evaluateFraudChecks`/`recordFraudChecksTx`
+ * (fraud, Fase 5, 19/08/2026) são reusados via seus `index.ts` públicos,
+ * porque cada um carrega regra própria (cálculo de status/estorno de
+ * `installments`, formato/`rule_version` do ledger, peso/score dos
+ * checks de fraude) que não deve ser duplicada aqui.
  */
 
 import { createHash } from "node:crypto";
@@ -37,7 +38,7 @@ import {
   paymentAllocations,
   creditBalances,
 } from "@/db/schema/financial";
-import { add, max as moneyMax, money, subtract, ZERO, type Money } from "@/shared/money";
+import { add, isZero, max as moneyMax, money, subtract, ZERO, type Money } from "@/shared/money";
 import type { Result } from "@/shared/result";
 import { err, ok } from "@/shared/result";
 import {
@@ -48,8 +49,9 @@ import {
 import { writeEntryTx } from "@/modules/ledger";
 import type { FieldConfidence } from "@/modules/ingestion";
 import type { IdentificationTier } from "@/modules/payers";
+import { evaluateFraudChecks, recordFraudChecksTx } from "@/modules/fraud";
 import { allocatePayment, owedCents } from "../domain/allocation-engine";
-import { decideAutoApply } from "../domain/auto-apply-decision";
+import { decideAutoApply, isPlausibleDate } from "../domain/auto-apply-decision";
 import type {
   AllocatableInstallment,
   AllocationResult,
@@ -81,6 +83,28 @@ function hashTransactionRef(ref: string): string {
   return createHash("sha256").update(ref).digest("hex");
 }
 
+/**
+ * Check `e2e_reuse` proativo (spec §8, Camada B) — consulta pelo mesmo
+ * índice único que hoje só era descoberto reativamente (violação
+ * `23505` no insert, ver `isUniqueViolation`/catch em
+ * `executeReceiptPayment`). Roda DENTRO da mesma transação que trava as
+ * parcelas, então não abre janela de corrida nova; o catch reativo
+ * continua como rede de segurança contra a corrida que sempre existiu
+ * entre "consultar" e "inserir" de fato.
+ */
+async function transactionRefAlreadyUsedTx(
+  db: TenantDb,
+  tenantId: string,
+  transactionRefHash: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: payments.id })
+    .from(payments)
+    .where(and(eq(payments.tenantId, tenantId), eq(payments.transactionRefHash, transactionRefHash)))
+    .limit(1);
+  return rows.length > 0;
+}
+
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
@@ -94,11 +118,14 @@ interface ApplyAllocationParams {
   readonly transactionRef: string | null;
   readonly transactionRefHash: string | null;
   readonly actorUserId: string | null;
-  readonly origin: "manual" | "receipt";
-  readonly verificationLevel: "unverified" | "document";
+  readonly origin: "manual" | "receipt" | "statement";
+  readonly verificationLevel: "unverified" | "document" | "statement";
   readonly receiptId: string | null;
   readonly allocation: AllocationResult;
 }
+
+/** `manual`/`statement` são sempre decisão humana explícita (a segunda, um humano escolhendo pagador/contrato pra uma linha de extrato); `receipt` é o motor decidindo sozinho (`decideAutoApply` já disse `auto_applied`). */
+const HUMAN_INITIATED_ORIGINS: ReadonlySet<ApplyAllocationParams["origin"]> = new Set(["manual", "statement"]);
 
 /**
  * Escreve `payments`/`payment_allocations`/`installments`/
@@ -170,7 +197,7 @@ async function applyAllocationTx(
       paymentId: paymentRow.id,
       amountCents: consumed,
       direction: "credit",
-      actorType: params.origin === "manual" ? "user" : "system",
+      actorType: HUMAN_INITIATED_ORIGINS.has(params.origin) ? "user" : "system",
       actorId: params.actorUserId,
       ruleVersion: RULE_VERSION,
     });
@@ -190,7 +217,7 @@ async function applyAllocationTx(
       paymentId: paymentRow.id,
       amountCents: allocation.remainingCents,
       direction: "credit",
-      actorType: params.origin === "manual" ? "user" : "system",
+      actorType: HUMAN_INITIATED_ORIGINS.has(params.origin) ? "user" : "system",
       actorId: params.actorUserId,
       ruleVersion: RULE_VERSION,
     });
@@ -254,6 +281,113 @@ export async function executeManualPayment(
     if (isUniqueViolation(error)) return err("duplicate_transaction");
     throw error;
   }
+}
+
+/**
+ * Terceira variação de `applyAllocationTx` (mesma forma de
+ * `executeManualPayment`, só troca `origin`/`verificationLevel`) —
+ * usada pelo caminho manual de conciliação por extrato (Fase 5, fatia
+ * 2, 19/08/2026, `@/modules/statements`): um humano escolheu pagador/
+ * contrato pra uma linha de extrato sem match automático. `statement`
+ * é um nível de verificação real aqui — o crédito já consta no
+ * extrato bancário importado, mais forte que `document` (spec §8.3).
+ */
+export async function executeStatementPayment(
+  ctx: TenantContext,
+  input: RegisterManualPaymentInput,
+): Promise<Result<{ paymentId: string }, RegisterManualPaymentError>> {
+  const contract = await getContractById(ctx, input.contractId);
+  if (!contract) return err("contract_not_found");
+
+  try {
+    return await getDb(ctx, async (db) => {
+      const locked = await lockInstallmentsByContractTx(db, ctx.tenantId, input.contractId);
+      const allocatable: AllocatableInstallment[] = locked.map((i) => ({
+        id: i.id,
+        dueDate: i.dueDate,
+        amountCents: i.amountCents,
+        fineCents: i.fineCents,
+        interestCents: i.interestCents,
+        paidCents: i.paidCents,
+        status: i.status,
+      }));
+
+      const referenceDate = input.paidAt.toISOString().slice(0, 10);
+      const allocation = allocatePayment(allocatable, input.amountCents, {
+        toleranceCents: contract.toleranceCents,
+        earlyPaymentPolicy: contract.earlyPaymentPolicy,
+        referenceDate,
+      });
+
+      const transactionRefHash = input.transactionRef ? hashTransactionRef(input.transactionRef) : null;
+
+      const result = await applyAllocationTx(db, ctx, {
+        payerId: input.payerId,
+        contractId: input.contractId,
+        amountCents: input.amountCents,
+        paidAt: input.paidAt,
+        method: input.method,
+        transactionRef: input.transactionRef ?? null,
+        transactionRefHash,
+        actorUserId: input.actorUserId ?? null,
+        origin: "statement",
+        verificationLevel: "statement",
+        receiptId: null,
+        allocation,
+      });
+
+      return ok(result);
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) return err("duplicate_transaction");
+    throw error;
+  }
+}
+
+/**
+ * Usada por `@/modules/statements` pra casar uma linha de extrato pelo
+ * E2E id extraído da descrição — nunca lida com hash, só com o E2E id
+ * bruto (o hashing fica encapsulado aqui, mesma função privada
+ * `hashTransactionRef` usada pra escrever `payments`). 0 ou 1
+ * resultado, nunca ambíguo (índice único por tenant+hash).
+ */
+export async function findPaymentByTransactionRef(
+  ctx: TenantContext,
+  rawTransactionRef: string,
+): Promise<{ id: string; verificationLevel: string } | null> {
+  const hash = hashTransactionRef(rawTransactionRef);
+  const rows = await getDb(ctx, (db) =>
+    db
+      .select({ id: payments.id, verificationLevel: payments.verificationLevel })
+      .from(payments)
+      .where(and(eq(payments.tenantId, ctx.tenantId), eq(payments.transactionRefHash, hash)))
+      .limit(1),
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * "Nível sobe, nunca desce" (spec §8.3) garantido no próprio SQL — não
+ * depende de quem chama checar o nível atual antes. Sem I/O em
+ * `ledger_entries`: é upgrade de metadado de verificação, não um novo
+ * lançamento de dinheiro.
+ */
+export async function upgradeVerificationLevelToStatement(
+  ctx: TenantContext,
+  paymentId: string,
+): Promise<void> {
+  await getDb(ctx, (db) =>
+    db
+      .update(payments)
+      .set({ verificationLevel: "statement" })
+      .where(
+        and(
+          eq(payments.tenantId, ctx.tenantId),
+          eq(payments.id, paymentId),
+          inArray(payments.verificationLevel, ["unverified", "document"]),
+        ),
+      ),
+  );
 }
 
 export interface ReceiptPaymentInput {
@@ -322,6 +456,17 @@ async function executeReceiptPaymentTx(
       referenceDate: allocationReferenceDate,
     });
 
+    const transactionRefHash = input.transactionRef ? hashTransactionRef(input.transactionRef) : null;
+    const transactionRefReused = transactionRefHash
+      ? await transactionRefAlreadyUsedTx(db, ctx.tenantId, transactionRefHash)
+      : false;
+
+    const fraudAssessment = evaluateFraudChecks({
+      amountMatches: isZero(allocation.remainingCents),
+      datePlausible: isPlausibleDate(input.paidAt, input.referenceDate),
+      transactionRefReused,
+    });
+
     const decision = decideAutoApply({
       confidence: input.confidence,
       fieldConfidence: input.fieldConfidence,
@@ -331,11 +476,11 @@ async function executeReceiptPaymentTx(
       referenceDate: input.referenceDate,
       amountCents: input.amountCents,
       ceilingCents: input.ceilingCents,
+      blocksAutoApply: fraudAssessment.blocksAutoApply,
     });
 
     let paymentId: string | null = null;
     if (decision === "auto_applied") {
-      const transactionRefHash = input.transactionRef ? hashTransactionRef(input.transactionRef) : null;
       const result = await applyAllocationTx(db, ctx, {
         payerId: input.payerId,
         contractId: input.contractId,
@@ -353,11 +498,14 @@ async function executeReceiptPaymentTx(
       paymentId = result.paymentId;
     }
 
+    await recordFraudChecksTx(db, ctx.tenantId, input.receiptId, fraudAssessment.checks);
+
     await createProposalTx(db, ctx.tenantId, {
       receiptId: input.receiptId,
       paymentId,
       proposedAllocations: allocation.allocations,
       confidence: input.confidence,
+      riskScore: fraudAssessment.riskScore,
       decision,
     });
 

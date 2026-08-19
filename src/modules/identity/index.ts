@@ -29,6 +29,10 @@ export type {
   AcceptInviteError,
   AcceptInviteInput,
 } from "./application/accept-invite";
+export { requestPasswordReset } from "./application/request-password-reset";
+export type { RequestPasswordResetDeps } from "./application/request-password-reset";
+export { resetPassword } from "./application/reset-password";
+export type { ResetPasswordDeps, ResetPasswordError, ResetPasswordInput } from "./application/reset-password";
 
 export { getUserByEmail, getUserById, createUser, setPassword, touchLastLogin } from "./infra/user-repository";
 export type { UserRecord, NewUserRecord } from "./infra/user-repository";
@@ -40,5 +44,15 @@ export {
   listMembershipsForUser,
 } from "./infra/membership-repository";
 export type { ResolvedMembership, UserTenantMembership } from "./infra/membership-repository";
-export { createSession, getSessionByTokenHash, deleteSession } from "./infra/session-repository";
+export {
+  createSession,
+  getSessionByTokenHash,
+  deleteSession,
+  deleteAllSessionsForUser,
+} from "./infra/session-repository";
 export { createInviteToken, getInviteByTokenHash, deleteInviteToken } from "./infra/invite-repository";
+export {
+  createPasswordResetToken,
+  getPasswordResetByTokenHash,
+  deletePasswordResetToken,
+} from "./infra/password-reset-repository";

@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb, type TenantContext, type TenantDb } from "@/db/client";
 import { contracts, installments, payers } from "@/db/schema/financial";
 import { money, type Money } from "@/shared/money";
@@ -90,6 +90,68 @@ export async function saveContractWithSchedule(
     );
 
     return { contractId: contractRow.id };
+  });
+}
+
+/** Mesma checagem de `externalRefExists`, excluindo o próprio contrato — editar sem trocar a referência não deveria "colidir com si mesmo". */
+export async function externalRefExistsExcluding(
+  ctx: TenantContext,
+  externalRef: string,
+  excludeContractId: string,
+): Promise<boolean> {
+  const rows = await getDb(ctx, (db) =>
+    db
+      .select({ id: contracts.id })
+      .from(contracts)
+      .where(
+        and(
+          eq(contracts.tenantId, ctx.tenantId),
+          eq(contracts.externalRef, externalRef),
+          ne(contracts.id, excludeContractId),
+        ),
+      )
+      .limit(1),
+  );
+  return rows.length > 0;
+}
+
+/** Só metadado (`description`/`externalRef`) — nunca os campos estruturais que já geraram `installments` (decisão do usuário). */
+export async function saveContractMetadata(
+  ctx: TenantContext,
+  contractId: string,
+  data: { description: string | null; externalRef: string | null },
+): Promise<void> {
+  await getDb(ctx, (db) =>
+    db
+      .update(contracts)
+      .set({ description: data.description, externalRef: data.externalRef, updatedAt: new Date() })
+      .where(and(eq(contracts.tenantId, ctx.tenantId), eq(contracts.id, contractId))),
+  );
+}
+
+/**
+ * Cancelar contrato — nunca `DELETE`. Trava as parcelas (mesmo lock de
+ * `lockInstallmentsByContractTx` usado pra aplicar pagamento) e marca
+ * `cancelled` toda parcela que NÃO estiver `paid`; parcela paga é fato
+ * histórico, nunca tocada. Sem lançamento de ledger — mudança de status
+ * administrativo, não movimento de dinheiro (mesmo raciocínio do
+ * upgrade de `verification_level` na conciliação por extrato).
+ */
+export async function cancelContractTx(ctx: TenantContext, contractId: string): Promise<void> {
+  await getDb(ctx, async (db) => {
+    const locked = await lockInstallmentsByContractTx(db, ctx.tenantId, contractId);
+    for (const installment of locked) {
+      if (installment.status === "paid") continue;
+      await updateInstallmentTx(db, ctx.tenantId, installment.id, {
+        paidCents: installment.paidCents,
+        status: "cancelled",
+      });
+    }
+
+    await db
+      .update(contracts)
+      .set({ status: "cancelled", updatedAt: new Date() })
+      .where(and(eq(contracts.tenantId, ctx.tenantId), eq(contracts.id, contractId)));
   });
 }
 
