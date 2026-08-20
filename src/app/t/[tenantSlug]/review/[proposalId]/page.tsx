@@ -118,13 +118,17 @@ export default async function ReviewDetailPage({
           {!extraction ? (
             <p className="text-body text-content-muted">Sem extração registrada.</p>
           ) : (
-            <dl className="flex flex-col gap-2 text-body">
-              <div className="flex justify-between">
-                <dt className="text-content-secondary">Valor</dt>
-                <dd className="font-num tabular-nums">
-                  {extraction.amount_cents != null ? <Money value={extraction.amount_cents} /> : "—"}
-                </dd>
-              </div>
+            <>
+              {/*
+                DESIGN.md §1.5 item 1 — o valor é o número que decide a
+                aprovação/rejeição desta tela; domina visualmente sobre o
+                resto do metadado, em vez de ser mais uma linha do dl.
+              */}
+              <p className="mb-1 font-mono text-micro tracking-micro text-content-secondary uppercase">Valor</p>
+              <p className="mb-4 font-num text-metric text-content-primary tabular-nums">
+                {extraction.amount_cents != null ? <Money value={extraction.amount_cents} /> : "—"}
+              </p>
+              <dl className="flex flex-col gap-2 text-body">
               <div className="flex justify-between">
                 <dt className="text-content-secondary">Data paga</dt>
                 <dd>{extraction.paid_at?.slice(0, 10) ?? "—"}</dd>
@@ -161,7 +165,8 @@ export default async function ReviewDetailPage({
                   </dd>
                 </div>
               )}
-            </dl>
+              </dl>
+            </>
           )}
         </Card>
       </div>

@@ -8,7 +8,8 @@ import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Money } from "@/ui/components/Money";
-import { Button, buttonClassName } from "@/ui/components/Button";
+import { Button } from "@/ui/components/Button";
+import { buttonClassName } from "@/ui/components/button-class-name";
 import { StatusChip } from "@/ui/components/StatusChip";
 import { setPayerStatusAction } from "../actions";
 

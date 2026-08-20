@@ -105,6 +105,9 @@ export async function processReceiptExtraction(
     return reviewWithoutTarget(input, deps);
   }
   const payerId = identification.payerId;
+  // Já em memória (deps.listPayers() já buscou todos pra rodar identifyPayer)
+  // — nunca busca o pagador de novo só pra pegar o telefone cadastrado.
+  const payerPhoneE164 = payers.find((p) => p.id === payerId)?.phoneE164 ?? null;
 
   const contracts = await deps.listContractsByPayer(payerId);
   const activeContracts = contracts.filter((c) => c.status === "active");
@@ -136,6 +139,8 @@ export async function processReceiptExtraction(
     identificationTier: identification.tier,
     ceilingCents,
     referenceDate: new Date(),
+    ...(input.fromPhone ? { fromPhone: input.fromPhone } : {}),
+    payerPhoneE164,
   });
 
   if (isErr(outcome)) {

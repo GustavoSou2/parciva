@@ -1,1 +1,22 @@
 @import "../../design/quitou.theme.css";
+
+/*
+ * PROMPT_REFATORACAO.md — grão muito sutil (opacidade 2-3%) sobre áreas
+ * grandes e vazias do canvas. `pointer-events: none` + `position: fixed`
+ * cobrindo o viewport, pintado por cima do conteúdo (z-index alto) —
+ * é a técnica padrão de "film grain overlay": em opacidade tão baixa,
+ * sobrepor não atrapalha leitura, e evita ter que aplicar a textura
+ * elemento por elemento. `feTurbulence` gerado inline, sem imagem extra.
+ */
+body {
+  position: relative;
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}

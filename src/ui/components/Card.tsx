@@ -1,16 +1,16 @@
 import type { ReactNode } from "react";
 
 /**
- * Hierarquia sem sombra — spec §13.1: canvas → panel → card, nunca
- * elevação. `shadow-none` é o único valor que boxShadow expõe no tema
- * (setup.md Parte 7.2) — deixamos explícito para travar a intenção, não
- * por necessidade técnica (não há shadow-md para escolher por engano).
+ * Hierarquia canvas → panel → card (spec §13.1), reforçada por uma
+ * sombra deliberadamente quase invisível — DESIGN.md §4: "seu trabalho
+ * é ser notada só na ausência, não na presença". Sem hover próprio aqui
+ * de propósito — esquentar borda no hover é comportamento de cartão
+ * CLICÁVEL (ex.: `CronogramaCards.tsx`), não do primitivo genérico, que
+ * também cobre cartão estático (resumo, formulário).
  */
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div
-      className={`rounded-card border-hairline border-line-hairline bg-surface-card p-card-pad shadow-none ${className}`}
-    >
+    <div className={`rounded-card border-hairline border-line-hairline bg-surface-card p-card-pad shadow-card ${className}`}>
       {children}
     </div>
   );

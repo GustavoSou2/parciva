@@ -1,33 +1,48 @@
+"use client";
+
 import type { ButtonHTMLAttributes } from "react";
+import { motion } from "motion/react";
+import { buttonClassName, type ButtonVariant } from "./button-class-name";
 
 /**
- * Spec §13.1: menta é reservado a dot de seção, badge de variação e
- * botão da IA — nunca cor de botão primário genérico. Botão "primary"
- * aqui usa `surface.inverse`/`content.on-inverse` (preto sólido, texto
- * branco), não menta.
+ * DESIGN.md §2.3/§8: o acento vivo é reservado a confirmação em
+ * movimento e ao botão de ação com IA/automação — nunca cor de botão
+ * primário genérico. Botão "primary" aqui usa `surface.inverse`/
+ * `content.on-inverse` (tinta sólida, texto branco), nunca acento.
+ *
+ * `buttonClassName` mora em `./button-class-name` (sem "use client") —
+ * páginas server component importam de lá diretamente. Ver comentário
+ * naquele arquivo.
  */
-type ButtonVariant = "primary" | "secondary";
+export { buttonClassName, type ButtonVariant };
 
 /**
- * Exportada separada do componente porque `<a>` (ex.: `next/link`) não
- * pode conter `<button>` como descendente (HTML inválido) — telas que
- * precisam de um link com cara de botão (ex.: "Novo pagador") aplicam
- * esta classe direto no `Link`, em vez de aninhar `<Button>` dentro dele.
+ * `motion.button` em vez de `<button>` cru — único uso de Framer Motion
+ * na base de primitivos (DESIGN.md §6: "interação local, por
+ * componente"), reusado em toda tela sem custo extra por página.
+ * `whileTap` respeita `prefers-reduced-motion` automaticamente via
+ * `<MotionConfig reducedMotion="user">` em `src/app/layout.tsx` — não
+ * precisa checar aqui.
  */
-export function buttonClassName(variant: ButtonVariant = "primary", className = ""): string {
-  const base =
-    "inline-block rounded-control px-4 py-2 text-body font-medium transition-opacity disabled:cursor-not-allowed disabled:opacity-50";
-  const styles =
-    variant === "primary"
-      ? "bg-surface-inverse text-content-on-inverse hover:opacity-90"
-      : "border-hairline border-line-hairline bg-surface-card text-content-primary hover:bg-surface-panel";
-  return `${base} ${styles} ${className}`;
-}
+// `motion.button` reinterpreta alguns handlers de evento nativos (drag/animation)
+// com a própria assinatura de gesto — nenhum uso deste projeto depende deles,
+// omitir evita o conflito de tipo entre o DOM nativo e a API do Framer Motion.
+type NativeButtonProps = Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "style" | "onDrag" | "onDragStart" | "onDragEnd" | "onAnimationStart" | "onAnimationEnd"
+>;
 
 export function Button({
   variant = "primary",
   className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
-  return <button className={buttonClassName(variant, className)} {...props} />;
+}: NativeButtonProps & { variant?: ButtonVariant }) {
+  return (
+    <motion.button
+      whileTap={{ scale: 0.97 }}
+      transition={{ duration: 0.1 }}
+      className={buttonClassName(variant, className)}
+      {...props}
+    />
+  );
 }

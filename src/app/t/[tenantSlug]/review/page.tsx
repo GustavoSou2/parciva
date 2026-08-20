@@ -1,11 +1,12 @@
 import Link from "next/link";
+import { ClipboardCheck } from "lucide-react";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { listProposalsByDecision } from "@/modules/reconciliation";
 import { getReceiptWithExtraction } from "@/modules/ingestion";
-import { Card } from "@/ui/components/Card";
 import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Money } from "@/ui/components/Money";
-import { StatusChip } from "@/ui/components/StatusChip";
+import { StatusChip, getCardStateBg } from "@/ui/components/StatusChip";
+import { buttonClassName } from "@/ui/components/button-class-name";
 
 /**
  * Fila de revisão (Marco 5, spec §6.6/§14 Fase 2) — todo comprovante que
@@ -13,6 +14,12 @@ import { StatusChip } from "@/ui/components/StatusChip";
  * === "needs_review"`). Sem isso, a única forma de ver o que caiu em
  * revisão era consultar o banco direto — a peça que fecha o loop do
  * invariante 5 do CLAUDE.md ("na dúvida, revisão humana").
+ *
+ * Cartão por proposta em vez de tabela (mesmo padrão de
+ * `contracts/page.tsx`) — todo item aqui está em "análise" por
+ * definição da própria fila, então o pastel é uniforme de propósito: é
+ * o sinal de "isso tudo precisa da sua atenção agora", não uma
+ * comparação entre estados diferentes.
  */
 export default async function ReviewQueuePage({
   params,
@@ -34,63 +41,56 @@ export default async function ReviewQueuePage({
   return (
     <>
       <Eyebrow>Fila de revisão</Eyebrow>
-      <Card>
-        {rows.length === 0 ? (
-          <p className="text-body text-content-muted">Nada em revisão no momento.</p>
-        ) : (
-          <table className="w-full text-left text-body">
-            <thead>
-              <tr className="border-b border-line-hairline text-content-secondary">
-                <th className="pb-2 font-medium">Recebido em</th>
-                <th className="pb-2 font-medium">Origem</th>
-                <th className="pb-2 font-medium">Pagador (extraído)</th>
-                <th className="pb-2 font-medium">Valor (extraído)</th>
-                <th className="pb-2 font-medium">Confiança</th>
-                <th className="pb-2 font-medium">Risco</th>
-                <th className="pb-2 font-medium">Status</th>
-                <th className="pb-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ proposal, receipt }) => (
-                <tr key={proposal.id} className="border-b border-line-hairline">
-                  <td className="py-2 text-content-secondary">
-                    {(receipt?.receivedAt ?? proposal.createdAt).toISOString().slice(0, 16).replace("T", " ")}
-                  </td>
-                  <td className="py-2 text-content-secondary">{receipt?.source ?? "—"}</td>
-                  <td className="py-2 text-content-secondary">
-                    {receipt?.extraction?.payer_name ?? "Não identificado"}
-                  </td>
-                  <td className="py-2 font-num tabular-nums">
+
+      {rows.length === 0 ? (
+        <p className="rounded-card border-hairline border-line-hairline bg-surface-card p-card-pad text-body text-content-muted shadow-card">
+          Nada em revisão no momento.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-card-gap">
+          {rows.map(({ proposal, receipt }) => (
+            <li
+              key={proposal.id}
+              className={`rounded-card border-hairline border-line-hairline p-card-pad shadow-card transition-colors duration-150 hover:border-line-strong ${getCardStateBg("review")}`}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <ClipboardCheck className="mt-0.5 size-4 shrink-0 text-content-secondary" strokeWidth={1.75} />
+                  <div>
+                    <p className="text-body font-medium text-content-primary">
+                      {receipt?.extraction?.payer_name ?? "Pagador não identificado"}
+                    </p>
+                    <p className="font-mono text-aux text-content-muted">
+                      {(receipt?.receivedAt ?? proposal.createdAt).toISOString().slice(0, 16).replace("T", " ")} ·{" "}
+                      {receipt?.source ?? "—"}
+                    </p>
+                    <p className="mt-1 font-mono text-aux text-content-secondary">
+                      Confiança {(proposal.confidence * 100).toFixed(0)}%
+                      {proposal.riskScore != null && ` · Risco ${proposal.riskScore.toFixed(0)}`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-2">
+                  <span className="font-num text-metric text-content-primary tabular-nums">
                     {receipt?.extraction?.amount_cents != null ? (
                       <Money value={receipt.extraction.amount_cents} />
                     ) : (
                       "—"
                     )}
-                  </td>
-                  <td className="py-2 font-num text-content-secondary tabular-nums">
-                    {(proposal.confidence * 100).toFixed(0)}%
-                  </td>
-                  <td className="py-2 font-num text-content-secondary tabular-nums">
-                    {proposal.riskScore != null ? proposal.riskScore.toFixed(0) : "—"}
-                  </td>
-                  <td className="py-2">
-                    <StatusChip status="review" />
-                  </td>
-                  <td className="py-2">
-                    <Link
-                      href={`/t/${tenantSlug}/review/${proposal.id}`}
-                      className="text-content-primary hover:underline"
-                    >
-                      Revisar
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
+                  </span>
+                  <StatusChip status="review" />
+                </div>
+              </div>
+              <Link
+                href={`/t/${tenantSlug}/review/${proposal.id}`}
+                className={`${buttonClassName("secondary")} mt-3 inline-block`}
+              >
+                Revisar
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   );
 }

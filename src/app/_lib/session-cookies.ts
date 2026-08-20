@@ -11,7 +11,8 @@ import type { NextResponse } from "next/server";
 import { deriveCsrfToken, hashSessionToken } from "@/modules/identity";
 import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from "@/shared/session-cookie";
 
-function sessionSecret(): string {
+/** Reusado por `mfa-verify/route.ts`/`login/route.ts` pra assinar o challenge de MFA — mesmo segredo, domain-separado por prefixo no payload (ver `identity/domain/mfa-challenge.ts`), sem env var nova. */
+export function sessionSecret(): string {
   const secret = process.env.SESSION_SECRET;
   if (!secret) throw new Error("SESSION_SECRET não configurado.");
   return secret;

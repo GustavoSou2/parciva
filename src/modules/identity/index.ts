@@ -14,9 +14,37 @@ export {
 } from "./domain/session";
 export { validatePassword } from "./domain/password-policy";
 export type { PasswordPolicyError } from "./domain/password-policy";
+export { createMfaChallenge, verifyMfaChallenge, MFA_CHALLENGE_TTL_MS } from "./domain/mfa-challenge";
+export {
+  base32Encode,
+  buildOtpauthUri,
+  generateTotpCode,
+  generateTotpSecret,
+  verifyTotpCode,
+} from "./domain/totp";
+export {
+  generateRecoveryCodes,
+  normalizeRecoveryCode,
+  RECOVERY_CODE_COUNT,
+} from "./domain/recovery-codes";
 
 export { login } from "./application/login";
-export type { LoginDeps, LoginError, LoginInput } from "./application/login";
+export type { LoginDeps, LoginError, LoginInput, LoginResult } from "./application/login";
+export { verifyMfaLogin } from "./application/verify-mfa-login";
+export type {
+  VerifyMfaLoginDeps,
+  VerifyMfaLoginError,
+  VerifyMfaLoginInput,
+} from "./application/verify-mfa-login";
+export { startMfaEnrollment } from "./application/start-mfa-enrollment";
+export type { StartMfaEnrollmentDeps, StartMfaEnrollmentOutput } from "./application/start-mfa-enrollment";
+export { confirmMfaEnrollment } from "./application/confirm-mfa-enrollment";
+export type {
+  ConfirmMfaEnrollmentDeps,
+  ConfirmMfaEnrollmentError,
+} from "./application/confirm-mfa-enrollment";
+export { disableMfaWithPassword } from "./application/disable-mfa";
+export type { DisableMfaDeps, DisableMfaError } from "./application/disable-mfa";
 export { logout } from "./application/logout";
 export type { LogoutDeps } from "./application/logout";
 export { requireSession } from "./application/require-session";
@@ -56,3 +84,12 @@ export {
   getPasswordResetByTokenHash,
   deletePasswordResetToken,
 } from "./infra/password-reset-repository";
+export {
+  getMfaState,
+  setPendingMfaSecret,
+  enableMfa,
+  disableMfa,
+  saveRecoveryCodes,
+  consumeRecoveryCode,
+} from "./infra/mfa-repository";
+export type { MfaState } from "./infra/mfa-repository";

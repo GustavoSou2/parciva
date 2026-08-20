@@ -49,7 +49,19 @@ import {
 import { writeEntryTx } from "@/modules/ledger";
 import type { FieldConfidence } from "@/modules/ingestion";
 import type { IdentificationTier } from "@/modules/payers";
-import { evaluateFraudChecks, recordFraudChecksTx } from "@/modules/fraud";
+import {
+  evaluateFraudChecks,
+  recordFraudChecksTx,
+  detectVelocityAnomaly,
+  detectDisproportionateNewPayerAmount,
+  detectAmountPatternAnomaly,
+  detectPhoneChange,
+  getPayerActivityCounts,
+  getPayerAverageInstallmentCents,
+  countDistinctPayersWithAmountRecently,
+  VELOCITY_WINDOW_HOURS,
+  AMOUNT_PATTERN_WINDOW_DAYS,
+} from "@/modules/fraud";
 import { allocatePayment, owedCents } from "../domain/allocation-engine";
 import { decideAutoApply, isPlausibleDate } from "../domain/auto-apply-decision";
 import type {
@@ -404,6 +416,10 @@ export interface ReceiptPaymentInput {
   readonly ceilingCents: Money;
   /** "Agora" — plausibilidade de `paidAt` (spec §6.6), nunca a mesma data usada para separar parcelas vencidas/futuras (essa é `paidAt`). */
   readonly referenceDate: Date;
+  /** E.164, sem prefixo `whatsapp:` — ausente para origem sem canal de telefone (`upload`/`email`/`api`). Camada C — `PHONE_CHANGE`. */
+  readonly fromPhone?: string | null;
+  /** `payers.phoneE164` do pagador já identificado — já em memória em quem chama (`process-receipt-extraction.ts`), nunca buscado de novo aqui. Camada C — `PHONE_CHANGE`. */
+  readonly payerPhoneE164?: string | null;
 }
 
 export type ReceiptPaymentOutcome =
@@ -461,10 +477,36 @@ async function executeReceiptPaymentTx(
       ? await transactionRefAlreadyUsedTx(db, ctx.tenantId, transactionRefHash)
       : false;
 
+    // Camada C (comportamento, DECISIONS.md [35]) — agregados buscados na
+    // mesma transação, nunca fora dela (mesmo motivo de amount_match/
+    // date_plausible: a decisão precisa ver o mesmo estado que vai gravar).
+    const velocityWindowStart = new Date(
+      input.referenceDate.getTime() - VELOCITY_WINDOW_HOURS * 60 * 60 * 1000,
+    );
+    const [activityCounts, averageInstallmentCents, distinctPayersWithSameAmount] = await Promise.all([
+      getPayerActivityCounts(db, ctx.tenantId, input.payerId, velocityWindowStart),
+      getPayerAverageInstallmentCents(db, ctx.tenantId, input.payerId),
+      countDistinctPayersWithAmountRecently(
+        db,
+        ctx.tenantId,
+        input.amountCents,
+        input.payerId,
+        new Date(input.referenceDate.getTime() - AMOUNT_PATTERN_WINDOW_DAYS * 24 * 60 * 60 * 1000),
+      ),
+    ]);
+
     const fraudAssessment = evaluateFraudChecks({
       amountMatches: isZero(allocation.remainingCents),
       datePlausible: isPlausibleDate(input.paidAt, input.referenceDate),
       transactionRefReused,
+      velocityAnomaly: detectVelocityAnomaly(activityCounts, velocityWindowStart),
+      newPayerAmountDisproportionate: detectDisproportionateNewPayerAmount({
+        totalAcceptedCount: activityCounts.recentAcceptedCount + activityCounts.priorAcceptedCount,
+        amountCents: input.amountCents,
+        averageInstallmentCents,
+      }),
+      amountPatternSuspicious: detectAmountPatternAnomaly(distinctPayersWithSameAmount),
+      phoneChanged: detectPhoneChange(input.fromPhone ?? null, input.payerPhoneE164 ?? null),
     });
 
     const decision = decideAutoApply({

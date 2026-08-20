@@ -9,12 +9,13 @@ import {
   getUserByEmail,
   createSession,
   touchLastLogin,
+  createMfaChallenge,
   login,
   listMembershipsForUser,
 } from "@/modules/identity";
 import { isErr } from "@/shared/result";
 import { checkRateLimit } from "@/shared/rate-limit";
-import { setSessionCookies } from "@/app/_lib/session-cookies";
+import { setSessionCookies, sessionSecret } from "@/app/_lib/session-cookies";
 
 export const runtime = "nodejs";
 
@@ -50,11 +51,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const result = await login(
     { email, password: body.password },
-    { getUserByEmail, createSession, touchLastLogin },
+    {
+      getUserByEmail,
+      createSession,
+      touchLastLogin,
+      createMfaChallenge: (userId) => createMfaChallenge(userId, sessionSecret()),
+    },
   );
 
   if (isErr(result)) {
     return NextResponse.json({ error: result.error }, { status: 401 });
+  }
+
+  // MFA ativo — senha bateu, mas a sessão só é criada depois do segundo
+  // fator (`POST /api/auth/mfa-verify`). Nenhum cookie é setado aqui.
+  if (result.value.kind === "mfa_required") {
+    return NextResponse.json({ mfaRequired: true, challengeToken: result.value.challengeToken }, { status: 200 });
   }
 
   // Resolve pra quais tenants este usuário pode ir — sem isso o cliente

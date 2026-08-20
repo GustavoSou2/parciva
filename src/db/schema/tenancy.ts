@@ -122,6 +122,23 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
 });
 
 /**
+ * Códigos de recuperação de MFA — só o hash (`identity/domain/
+ * recovery-codes.ts`), nunca o código em claro (mesmo raciocínio de
+ * `sessions`/`invite_tokens`). Sem `tenant_id`: MFA é propriedade do
+ * usuário, não do tenant (um usuário pode ser `owner` num tenant e
+ * `viewer` noutro). `usedAt` preenchido = consumido, nunca reutilizável.
+ */
+export const mfaRecoveryCodes = pgTable("mfa_recovery_codes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  codeHash: text("code_hash").notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  userCodeHashUnique: uniqueIndex("mfa_recovery_codes_user_code_hash_unique").on(t.userId, t.codeHash),
+}));
+
+/**
  * Une usuário a tenant com um papel. É esta tabela que a RLS de
  * `memberships` e as policies das tabelas de domínio consultam para
  * decidir se um usuário pode agir num tenant — ver 0001_rls.sql.

@@ -26,29 +26,31 @@ com segredo/chave fake, nunca testadas contra a API real.
 
 ## Próximo passo sugerido
 
-**MFA para owner/admin** (`docs/tasks/fase-0/01-mfa-owner-admin.md`).
-É a única lacuna de segurança da spec que segue como decisão
-explicitamente adiada desde o Marco 2, nunca fechada — spec §10.2
-marca obrigatório para esses dois papéis, e `users.mfaEnabled`/
-`mfaSecretRef` já existem no schema, sem uso, esperando exatamente
-essa tarefa. Escopo fechado, não depende de nenhuma outra pendência
-(nem das ações do usuário acima), e reduz o maior risco de conta
-comprometida do produto hoje: uma senha vazada de owner/admin é
-acesso total ao tenant, sem segunda camada.
+Com MFA (DECISIONS.md [36]) e Fase 5 Camada C (DECISIONS.md [35])
+concluídos e verificados ao vivo contra Postgres real, não há uma
+lacuna de segurança óbvia sobrando — as opções abaixo são igualmente
+prontas pra decidir (specs já escritas, só falta escolher):
 
-Alternativas igualmente prontas pra decidir (specs já escritas, só
-falta escolher):
-
-- **Resto da Fase 5 — checks forenses Camada A/B e Camada C
-  comportamental** (`docs/tasks/fase-5/01-...md`, `02-...md`).
-  Continuação natural da fatia 1 (DECISIONS.md [29]), mas Camada B
-  provavelmente traz dependência nova (análise forense de imagem/PDF),
-  escopo menos fechado que MFA.
+- **Resto da Fase 5 — checks forenses Camada A/B** (`docs/tasks/
+  fase-5/01-...md`). Traz duas decisões em aberto antes de poder
+  começar: qual dado usar pro `PAYEE_MATCH` (beneficiário esperado
+  por tenant, não existe ainda) e qual dependência usar pra
+  `EXIF_ANOMALY`/`PDF_PROVENANCE`/`ELA_HINT`/`FONT_ANOMALY` (forense
+  de imagem/PDF).
 - **Cifra de coluna — documento/telefone do pagador**
   (`docs/tasks/fase-0/02-...md`). Mesma urgência de "dado sensível
   hoje em texto claro no banco", mas exige migração expand→migrar→
   contract (mais passos, mais risco de execução) contra um risco
   (dump de banco) menos provável no dia a dia que credencial vazada.
+- **Forçar owner/admin a ativar o MFA que acabou de ficar pronto** —
+  deliberadamente fora desta fatia (decisão do usuário, DECISIONS.md
+  [36]): hoje é opt-in, sem bloquear login de conta existente. Vale
+  decidir quando/como nagear ou exigir, sem repetir o risco de travar
+  conta sem aviso.
+- **Refinamento de UI/UX** (ver "Em andamento" abaixo) — comercialmente
+  é a primeira coisa que um cliente real vê, mas ainda não tem tarefa
+  fechada em `docs/tasks/`; posso escrever o escopo se for essa a
+  escolha.
 
 Fase 6 (cobrança PIX modelo B) e a fatiação de `docs/spec/` seguem
 deliberadamente fora da lista — a primeira ainda não foi puxada pelo
@@ -296,6 +298,63 @@ documentação, sem mudança de código — `pnpm check` não se aplica): os
 identificado. Fecha o link morto de `src/shared/money.ts` para
 `docs/adr/0003-...md`. Ver "Pendências conhecidas" para o que ficou
 fora (fatiação de `docs/spec/`, link morto de `document.ts`).
+
+**Fase 5 — Camada C (comportamento) concluída em 19/08/2026**
+(`docs/tasks/fase-5/02-camada-c-comportamento.md`, DECISIONS.md [35]):
+os 4 checks que faltavam no módulo `fraud` — `velocity` (rajada de
+comprovantes fora do padrão histórico do pagador), `history` (pagador
+sem nenhum pagamento aceito antes enviando valor muito acima da média
+das próprias parcelas), `amount_pattern` (mesmo valor exato
+reaproveitado por ≥3 pagadores diferentes) e `phone_change` (telefone
+de origem diferente do cadastrado, quando a identificação não foi por
+telefone — cenário C-18 da spec). Escolhida em vez da Camada A/B
+forense por não exigir dependência nova nem schema novo. Os 4 produzem
+`result: "warn"` (nunca `"fail"`) e somam ao `risk_score` por um pool
+de peso próprio, limitado a 30 pontos mesmo com os 4 disparando juntos
+— nunca ultrapassam sozinhos o limiar que bloqueia auto-aplicação, e
+nunca entram em `FORCES_REVIEW`. `fraud/domain/behavior.ts` (puro, 15
+testes) + `fraud/infra/behavior-repository.ts` (agregados buscados na
+mesma transação de `executeReceiptPaymentTx`, sem tabela nova).
+`ReceiptPaymentInput` ganhou `fromPhone`/`payerPhoneE164`, repassados
+por `process-receipt-extraction.ts` — antes descartados depois da
+identificação do pagador. 26 testes novos/alterados em
+`fraud/domain/{behavior,evaluate}.test.ts` (exemplo + propriedade,
+fast-check), `pnpm exec tsc --noEmit`/`pnpm exec eslint` limpos.
+**Verificação manual ponta a ponta contra Postgres real não foi feita**
+— Docker Desktop não estava disponível no ambiente onde a tarefa foi
+executada; pendência registrada abaixo, não escondida.
+
+**MFA (TOTP) para owner/admin concluído em 19/08/2026**
+(`docs/tasks/fase-0/01-mfa-owner-admin.md`, DECISIONS.md [36]): a
+única lacuna de segurança da spec §10.2 adiada desde o Marco 2
+(decisão [15]). Ativação em duas etapas — segredo gerado e cifrado
+(AES-256-GCM local sobre `ENCRYPTION_KEY`, `src/shared/crypto.ts`,
+novo) fica pendente até o usuário confirmar o código do momento; só
+então `mfaEnabled` vira `true` e 10 códigos de recuperação são
+mostrados em claro uma única vez. TOTP (RFC 6238/4226) é hand-rolled
+com `node:crypto` — validado contra o vetor de teste oficial da RFC
+4226 Apêndice D —, QR code usa a dependência nova `qrcode`. Login com
+MFA ativo passa por um challenge stateless (`identity/domain/
+mfa-challenge.ts`, mesmo padrão HMAC de `deriveCsrfToken`, sem tabela
+nova) antes de criar sessão — `POST /api/auth/login` devolve
+`mfaRequired`, `POST /api/auth/mfa-verify` (novo, rate-limited)
+confirma o código (TOTP ou recuperação) e só aí abre a sessão. Nova
+tela `/account/security` (fora de `/t/<slug>/`, propositalmente — MFA
+é do usuário, não do tenant), link "Segurança" no nav de todo tenant.
+**Escopo é só o mecanismo — nenhuma conta owner/admin existente é
+forçada a ativar** (decisão do usuário, evita bloquear login sem
+aviso). 351 testes (unidade + propriedade) passam, `pnpm exec tsc
+--noEmit`/`pnpm exec eslint` limpos. **Verificado ao vivo contra
+Postgres real ainda no mesmo dia** (Docker ficou disponível): migração
+`0021_flowery_riptide.sql` aplicada, e um roteiro de 13 passos rodado
+via script descartável contra os módulos reais — criar usuário, login
+sem MFA (sessão direta), ativar MFA (código errado rejeitado, código
+certo ativa + gera 10 códigos de recuperação), login com MFA (challenge
+em vez de sessão), TOTP errado rejeitado/certo cria sessão, código de
+recuperação funciona uma vez (segunda tentativa do mesmo código falha
+— consumo atômico confirmado contra banco real), desativar com senha
+errada falha/certa funciona, login volta a criar sessão direto. Todos
+os passos passaram de primeira.
 
 ## O que está funcionando agora
 
@@ -614,6 +673,16 @@ que por fase:
   auditoria única de todas as Server Actions do projeto pra confirmar
   que não existe uma quinta ação no mesmo estado não foi feita, só as
   encontradas nesta investigação.
+- **Somar os pesos de Camada C direto em `CHECK_WEIGHTS` (Fase 5,
+  DECISIONS.md [35]) diluía silenciosamente o score de Camada A/B** —
+  achado pelo próprio `evaluate.test.ts` já existente antes de chegar
+  em produção: `amount_match` + `date_plausible` falhando juntos
+  deixou de ultrapassar `DEFAULT_RISK_SCORE_THRESHOLD` sozinho, porque
+  o denominador (`TOTAL_WEIGHT`) cresceu com os pesos novos.
+  Corrigido: Camada C ganhou pool de peso próprio
+  (`BEHAVIORAL_CHECK_WEIGHTS`), somado como incremento aditivo e
+  limitado (`BEHAVIORAL_MAX_CONTRIBUTION`) ao score de Camada A/B, que
+  passou a manter exatamente o cálculo de antes desta fatia.
 
 ## Em andamento
 
@@ -806,10 +875,25 @@ mexer no modelo de RLS (DECISIONS.md [23] — segunda policy em
 
 ## Pendências conhecidas
 
-- **MFA não implementado** — spec §10.2 marca obrigatório para owner/
-  admin. Decisão explícita de adiar (não esquecimento): login básico
-  primeiro, testável no navegador; TOTP vira marco próprio. `users.
-  mfaEnabled`/`mfaSecretRef` já existem no schema, prontos para receber.
+- **Fase 5 — Camada C (comportamento) sem verificação ao vivo contra
+  Postgres real** (DECISIONS.md [35], 19/08/2026): implementação e os
+  26 testes de domínio (fixture controlada, `fraud/domain/{behavior,
+  evaluate}.test.ts`) passam limpos, mas o passo de "criar pagador com
+  histórico controlado e conferir `fraud_checks`/`risk_score` reais"
+  que todo marco anterior fez não rodou desta vez — Docker Desktop não
+  estava disponível no ambiente de execução. Baixo risco (lógica é
+  toda pura e testada, agregados de infra seguem o mesmo padrão já
+  verificado de `fraud-check-repository.ts`), mas fica registrado até
+  alguém confirmar contra o banco real.
+- ~~**MFA não implementado**~~ — **implementado e verificado ao vivo
+  em 19/08/2026** (DECISIONS.md [36]). Docker ficou disponível ainda
+  no mesmo dia; migração `0021_flowery_riptide.sql` aplicada e os 13
+  passos do roteiro de verificação (ativar, login com/sem código,
+  código errado, código de recuperação uso único, desativar com senha
+  errada/certa) passaram contra Postgres real. Opt-in por decisão do
+  usuário: o mecanismo está pronto pra qualquer conta, mas nenhuma
+  conta owner/admin é forçada a ativar ainda — ver "Próximo passo
+  sugerido" no topo deste arquivo.
 - ~~**Nenhum provedor de e-mail real configurado**~~ / ~~**Sem "esqueci
   minha senha"**~~ — **resolvidos em 19/08/2026** (DECISIONS.md [33]).
   `src/shared/email.ts` (Resend, sem SDK) ligado em `sendWelcomeEmail`/
@@ -853,10 +937,17 @@ mexer no modelo de RLS (DECISIONS.md [23] — segunda policy em
 - **Módulos da spec ainda sem pasta**: `charges`, `psp` (`payers`,
   `contracts`, `ledger`, `reconciliation` existem desde o Marco 1,
   18/08/2026; `fraud` existe desde a Fase 5 fatia 1, 19/08/2026).
-- **`src/shared/{crypto,errors}.ts` não existem.** Não há criptografia de
-  coluna para documento/telefone. (`logger.ts` existe desde o Marco 6,
-  DECISIONS.md [21] — cobertura parcial, só processos de produção
-  contínua; `storage.ts` já existe, em v1 mínima — ver DECISIONS.md [7].)
+- ~~**`src/shared/crypto.ts` não existe.**~~ — **resolvido em
+  19/08/2026** (DECISIONS.md [36]): AES-256-GCM local sobre
+  `ENCRYPTION_KEY`, criado pra cifrar o segredo TOTP do MFA, genérico
+  o bastante pra qualquer outro segredo pequeno que precise do mesmo
+  "cofre local" no futuro. **`src/shared/errors.ts` continua não
+  existindo** — ainda não há criptografia de COLUNA para documento/
+  telefone do pagador (`docs/tasks/fase-0/02-...md`, escopo diferente:
+  aquilo é uma coluna de banco cifrada por linha, não um segredo único
+  como o do MFA). (`logger.ts` existe desde o Marco 6, DECISIONS.md
+  [21] — cobertura parcial, só processos de produção contínua;
+  `storage.ts` já existe, em v1 mínima — ver DECISIONS.md [7].)
 - **Dependências instaladas e não usadas**: `twilio` (SDK) não é importado
   em nenhum arquivo — o código chama a REST API do Twilio manualmente via
   `fetch`; `sharp` só é usado em `normalizer.ts`, ainda longe da cobertura
@@ -938,10 +1029,17 @@ mexer no modelo de RLS (DECISIONS.md [23] — segunda policy em
   `ExtractionOutput` não tem esse campo, adicioná-lo mudaria o contrato
   de extração inteiro); "mensagem fora de ordem" (DoD da Fase 3).
   ~~Risco/fraude de verdade (§6.6 — Fase 5)~~ — **parcial desde
-  19/08/2026** (DECISIONS.md [29]): `amount_match`/`date_plausible`/
-  `e2e_reuse` via módulo `fraud`, `reconciliation_proposals.risk_score`
-  populado; resto da Fase 5 (checks forenses, Camada C, conciliação por
-  extrato) ainda pendente. `field_confidence` também segue nunca
+  19/08/2026, ampliada no mesmo dia** (DECISIONS.md [29]/[32]/[35]):
+  `amount_match`/`date_plausible`/`e2e_reuse` (Camada A/B) e
+  `velocity`/`history`/`amount_pattern`/`phone_change` (Camada C) via
+  módulo `fraud`, `reconciliation_proposals.risk_score` populado;
+  conciliação por extrato (Camada D) também concluída. Só falta Camada
+  A/B forense (`PAYEE_MATCH`/`E2E_FORMAT`/`INSTITUTION_KNOWN`/
+  `LAYOUT_KNOWN`/`EXIF_ANOMALY`/`PDF_PROVENANCE`/`ELA_HINT`/
+  `FONT_ANOMALY`, `docs/tasks/fase-5/01-...md`) — depende de dado novo
+  (beneficiário esperado por tenant) e de uma dependência nova pra
+  forense de imagem/PDF, nenhuma das duas decidida ainda.
+  `field_confidence` também segue nunca
   populado por nenhum tier hoje (nem determinístico nem OCR preenchem
   por campo), então a checagem "nenhum campo crítico abaixo de 0,85"
   do §6.6 só entra em ação quando um tier futuro (VLM) começar a

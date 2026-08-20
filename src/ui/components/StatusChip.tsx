@@ -1,58 +1,99 @@
+import { AlertTriangle, CheckCircle2, type LucideIcon } from "lucide-react";
+
 /**
- * Status sem cor semântica — spec §13.1: "não existe verde-positivo /
- * vermelho-negativo". Cada estado se diferencia por rótulo, peso de
- * borda (hairline vs strong) e decoração de texto, nunca por matiz.
- * "Vencido" usa a mesma borda de "Confirmado" de propósito — a spec
- * distingue esse estado por posição na tela (agrupado no topo), não
- * pelo chip; não invente cor aqui para compensar isso.
+ * DESIGN.md §2.2/§7 — pastel de estado, NOMEADO PELO PROCESSO (não
+ * bom/ruim genérico), substitui a disciplina anterior de "só peso de
+ * borda, nunca cor" (spec §13.1). Continua verdadeiro o espírito da
+ * regra antiga: não existe verde-positivo/vermelho-negativo arbitrário
+ * — "vencido" é urgência de ação, não culpa do cliente; as 4 cores são
+ * nomeadas por ESTADO, e o pastel some se o dinheiro nunca chegou a
+ * acontecer (grupo "aberto" fica neutro). Ver DECISIONS.md pela mudança
+ * completa e por que ela é deliberada, não um esquecimento da regra
+ * antiga.
  *
- * "review" aproxima a "hachura diagonal" da spec com opacity.hatch
- * (0.35) sobre um fundo neutro — um verdadeiro padrão diagonal exigiria
- * background-image, que não é um token e violaria no-arbitrary-value.
+ * Os 14 status reais do produto mapeiam pros 4 estados do DESIGN.md:
+ * - liquidado: pago/confirmado de verdade
+ * - aberto (neutro, sem pastel): ainda não aconteceu nada de definitivo
+ * - análise: em conferência (humana ou parcial)
+ * - atraso: aconteceu algo que precisa de atenção — vencido é urgência
+ *   de prazo; rejeitado/cancelado/baixado/estornado são "deixou de
+ *   valer" (por isso mantêm o `line-through` herdado da disciplina
+ *   antiga — precisão de "o que aconteceu", spec §13.3 — mesmo
+ *   compartilhando o pastel de atraso).
  */
+type StateGroup = "open" | "review" | "settled" | "overdue";
+
+const GROUP_STYLE: Record<StateGroup, { bg: string; text: string }> = {
+  open: { bg: "bg-state-open-pastel", text: "text-state-open" },
+  review: { bg: "bg-state-review-pastel", text: "text-state-review" },
+  settled: { bg: "bg-state-settled-pastel", text: "text-state-settled" },
+  overdue: { bg: "bg-state-overdue-pastel", text: "text-state-overdue" },
+};
+
+const GROUP_ICON: Partial<Record<StateGroup, LucideIcon>> = {
+  settled: CheckCircle2,
+  overdue: AlertTriangle,
+};
+
+interface StatusDef {
+  readonly label: string;
+  readonly group: StateGroup;
+  readonly voided?: boolean; // line-through — "deixou de valer", não "está vencendo"
+}
+
 const STATUS = {
-  confirmed: { label: "Confirmado", style: "border-line-strong text-content-primary" },
-  document: { label: "Comprovante conferido", style: "border-line-hairline text-content-primary" },
-  review: {
-    label: "Em revisão",
-    style: "border-line-hairline bg-surface-panel opacity-hatch text-content-primary",
-  },
-  rejected: { label: "Rejeitado", style: "border-line-strong line-through text-content-primary" },
-  overdue: { label: "Vencido", style: "border-line-strong text-content-primary" },
-  unverified: { label: "Registrado manualmente", style: "border-line-hairline text-content-muted" },
-  // `installments.status` (spec §5.2) — Marco 3. Mesma disciplina: sem
-  // cor, só peso de borda/decoração. "overdue" acima já cobre parcela
-  // vencida — não duplicar aqui.
-  paid: { label: "Quitada", style: "border-line-strong text-content-primary" },
-  pending: { label: "A vencer", style: "border-line-hairline text-content-muted" },
-  partial: {
-    label: "Parcial",
-    style: "border-line-hairline bg-surface-panel opacity-hatch text-content-primary",
-  },
-  cancelled: { label: "Cancelada", style: "border-line-hairline line-through text-content-muted" },
-  written_off: { label: "Baixa por perda", style: "border-line-strong line-through text-content-primary" },
-  // `payments.status === "reversed"` — rótulo próprio, nunca reusar
-  // "Rejeitado" (spec §13.3: nomear pelo que a pessoa controla, com
-  // precisão — estorno não é a mesma coisa que rejeição).
-  reversed: { label: "Estornado", style: "border-line-strong line-through text-content-primary" },
-  // `reconciliation_proposals.decision === "reviewed_approved"` (Marco 5)
-  // — nunca reusar o label "Confirmado" (decisão [5]: reservado a
-  // `psp_confirmed`, confirmação real do PSP). Aprovação humana na fila
-  // de revisão continua sendo comprovante, não confirmação bancária.
-  reviewed_approved: { label: "Aprovado na revisão", style: "border-line-strong text-content-primary" },
-  // `payers.status === "inactive"` — editar/desativar pagador. Mesma
-  // disciplina de baixa ênfase de `pending`/`unverified` (hairline +
-  // muted), nunca cor — desativado não é "erro", é estado administrativo.
-  inactive: { label: "Inativo", style: "border-line-hairline text-content-muted" },
-} as const;
+  confirmed: { label: "Confirmado", group: "settled" },
+  document: { label: "Comprovante conferido", group: "open" },
+  review: { label: "Em revisão", group: "review" },
+  rejected: { label: "Rejeitado", group: "overdue", voided: true },
+  overdue: { label: "Vencido", group: "overdue" },
+  unverified: { label: "Registrado manualmente", group: "open" },
+  // `installments.status` (spec §5.2) — Marco 3.
+  paid: { label: "Quitada", group: "settled" },
+  pending: { label: "A vencer", group: "open" },
+  partial: { label: "Parcial", group: "review" },
+  cancelled: { label: "Cancelada", group: "overdue", voided: true },
+  written_off: { label: "Baixa por perda", group: "overdue", voided: true },
+  // `payments.status === "reversed"` — rótulo próprio, nunca reusa "Rejeitado"
+  // (spec §13.3: nomear pelo que a pessoa controla, com precisão).
+  reversed: { label: "Estornado", group: "overdue", voided: true },
+  // `reconciliation_proposals.decision === "reviewed_approved"` (Marco 5) —
+  // nunca reusa "Confirmado" (decisão [5]: reservado a psp_confirmed).
+  reviewed_approved: { label: "Aprovado na revisão", group: "settled" },
+  // `payers.status === "inactive"` — desativado não é "erro", é estado administrativo.
+  inactive: { label: "Inativo", group: "open" },
+  // `contracts.status` — "active" é o estado padrão de todo contrato em andamento.
+  active: { label: "Ativo", group: "open" },
+} as const satisfies Record<string, StatusDef>;
+
+/** Reusado por `CronogramaCards.tsx` pra colorir a régua-resumo com o mesmo agrupamento da pílula — nunca reinventar o mapeamento em outro lugar. */
+export function getStatusGroup(status: keyof typeof STATUS): StateGroup {
+  return STATUS[status].group;
+}
+
+/**
+ * DESIGN.md §12 (emenda v4.1) — pastel de estado como fundo do cartão
+ * inteiro, não só da pílula. "Aberto" usa `surface-card` (branco) em vez
+ * do pastel de §2.2 (que É a cor do canvas) — um cartão branco sobre
+ * canvas cinza continua visível; um cartão "pastel aberto" se
+ * confundiria com o fundo atrás dele.
+ */
+export function getCardStateBg(status: keyof typeof STATUS): string {
+  const group = STATUS[status].group;
+  return group === "open" ? "bg-surface-card" : GROUP_STYLE[group].bg;
+}
 
 export function StatusChip({ status }: { status: keyof typeof STATUS }) {
-  const s = STATUS[status];
+  const def: StatusDef = STATUS[status];
+  const style = GROUP_STYLE[def.group];
+  const Icon = GROUP_ICON[def.group];
+
   return (
     <span
-      className={`inline-block rounded-chip border-hairline px-2 py-0.5 text-micro tracking-micro uppercase ${s.style}`}
+      className={`inline-flex items-center gap-1 rounded-pill px-2.5 py-0.5 font-mono text-micro tracking-micro uppercase ${style.bg} ${style.text} ${def.voided ? "line-through" : ""}`}
     >
-      {s.label}
+      {Icon && <Icon className="size-3" strokeWidth={1.75} />}
+      {def.label}
     </span>
   );
 }

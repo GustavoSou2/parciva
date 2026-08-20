@@ -1,70 +1,47 @@
 {
   "name": "Parciva",
-  "description": "Design tokens extraidos do dashboard financeiro Parciva. Monocromatico com um unico acento menta. Compativel com tailwind.config.js (v3) via theme.extend.",
-  "version": "1.0.0",
+  "description": "Design tokens v4 'Acolhedor com Peso' — ver DESIGN.md. Base neutra papel/fundo/tinta/grafite, pastel de estado nomeado por processo, acento unico (#35D48A) so em pulso/CTA-IA. Compativel com tailwind.config.js (v3) via theme.extend.",
+  "version": "4.0.0",
   "theme": {
     "extend": {
       "colors": {
-        "ink": {
-          "DEFAULT": "#0A0A0A",
-          "50": "#F5F5F5",
-          "100": "#E6E6E6",
-          "200": "#D5D5D5",
-          "300": "#BDBDBD",
-          "400": "#9A9A9A",
-          "500": "#8A8A8A",
-          "600": "#6B6B6B",
-          "700": "#4A4A4A",
-          "800": "#2E2E2E",
-          "900": "#0A0A0A"
-        },
-        "mint": {
-          "DEFAULT": "#7CF5A5",
-          "50": "#EDFEF3",
-          "100": "#D3FBE1",
-          "200": "#A6F8C4",
-          "300": "#7CF5A5",
-          "400": "#4EE383",
-          "500": "#2FC566",
-          "600": "#1F9C4F",
-          "700": "#17753B",
-          "800": "#0F4D27",
-          "900": "#082915"
-        },
         "surface": {
-          "canvas": "#F1F1F1",
-          "panel": "#E6E6E6",
-          "card": "#FBFBFB",
+          "canvas": "#F7F6F3",
+          "panel": "#EFEEEA",
+          "card": "#FFFFFF",
           "raised": "#FFFFFF",
-          "inverse": "#0A0A0A",
-          "assistant": "#2E2E2E",
-          "assistant-chip": "#4A4A4A"
+          "inverse": "#12140F"
         },
         "content": {
-          "primary": "#0A0A0A",
-          "secondary": "#6B6B6B",
-          "muted": "#8A8A8A",
-          "disabled": "#BDBDBD",
-          "on-inverse": "#FFFFFF",
-          "on-assistant": "#B8B8B8"
+          "primary": "#12140F",
+          "secondary": "#5C625F",
+          "muted": "#9AA09C",
+          "on-inverse": "#FFFFFF"
         },
         "line": {
-          "hairline": "#DCDCDC",
-          "axis": "#D5D5D5",
-          "strong": "#0A0A0A",
-          "assistant": "#555555"
+          "hairline": "#E4E5E1",
+          "strong": "#D2D4CE"
         },
-        "data": {
-          "actual": "#0A0A0A",
-          "forecast": "#BDBDBD",
-          "highlight": "#7CF5A5",
-          "grid": "#E6E6E6"
+        "state": {
+          "open": "#5C625F",
+          "open-pastel": "#F7F6F3",
+          "review": "#9A6A18",
+          "review-pastel": "#FBF0D9",
+          "settled": "#0F6B45",
+          "settled-pastel": "#E1F3E8",
+          "overdue": "#A0331F",
+          "overdue-pastel": "#FBE6E1"
+        },
+        "accent": {
+          "DEFAULT": "#35D48A",
+          "hover": "#1F9C4F"
         }
       },
       "fontFamily": {
-        "display": ["Sofia Pro", "Poppins", "Questrial", "ui-sans-serif", "system-ui", "sans-serif"],
-        "sans": ["Sofia Pro", "Poppins", "ui-sans-serif", "system-ui", "sans-serif"],
-        "num": ["Sofia Pro", "ui-sans-serif", "system-ui", "sans-serif"]
+        "display": ["var(--font-ui)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "sans": ["var(--font-ui)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "num": ["var(--font-money)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "mono": ["var(--font-machine)", "ui-monospace", "monospace"]
       },
       "fontSize": {
         "display-xl": ["4rem", { "lineHeight": "1.02", "letterSpacing": "-0.03em", "fontWeight": "400" }],
@@ -86,14 +63,15 @@
         "display-xl": "-0.03em"
       },
       "borderRadius": {
-        "card": "12px",
-        "control": "12px",
+        "card": "16px",
+        "control": "10px",
         "field": "10px",
-        "chip": "6px",
+        "rail": "14px",
+        "mini": "12px",
         "pill": "9999px"
       },
       "borderWidth": {
-        "hairline": "0.5px"
+        "hairline": "1px"
       },
       "spacing": {
         "nav": "52px",
@@ -101,10 +79,12 @@
         "icon": "18px",
         "icon-sm": "14px",
         "card-pad": "20px",
-        "card-gap": "12px"
+        "card-gap": "12px",
+        "sidebar": "228px"
       },
       "boxShadow": {
-        "none": "none"
+        "none": "none",
+        "card": "0 1px 2px rgba(18, 20, 15, 0.04)"
       },
       "opacity": {
         "hatch": "0.35"
@@ -112,10 +92,10 @@
     }
   },
   "usage": {
-    "accent": "mint.DEFAULT so em tres papeis: dot de secao, badge de variacao e botao da IA. Nunca como fundo de area grande nem como cor de botao primario.",
-    "semantic": "Nao existe verde-positivo / vermelho-negativo. Variacao e comunicada pelo sinal (+/-) e pela posicao, nao pela cor.",
-    "elevation": "Sem sombra. Hierarquia vem da escada canvas -> panel -> card.",
-    "charts": "data.actual em preto solido, data.forecast em cinza ou hachura diagonal. Sem grid, sem area preenchida.",
-    "typeScale": "Salto binario: micro (11px caps, tracking 0.09em) ou display (40px+). Evitar tamanhos intermediarios em titulos."
+    "accent": "acento (#35D48A) so em dois papeis: confirmacao em movimento (pulso) e botao de acao com IA/automacao. Nunca fundo de area grande, nunca botao primario (isso e sempre tinta).",
+    "semantic": "Pastel de estado e nomeado pelo ESTADO DO PROCESSO (aberto/analise/liquidado/atraso), nunca bom/ruim generico — nao existe verde-positivo/vermelho-negativo arbitrario. Ver DESIGN.md.",
+    "elevation": "Hierarquia vem da escada canvas -> panel -> card, reforcada por uma sombra muito sutil (shadow-card) — nao e elevacao dramatica.",
+    "typeScale": "Salto binario: micro (11px caps, tracking 0.09em) ou display (40px+). Evitar tamanhos intermediarios em titulos.",
+    "typography": "font-num (Inter, tabular) para dinheiro/metrica; font-sans (Schibsted Grotesk) para interface/prosa; font-mono (Geist Mono) para E2E/data/timestamp/rotulo/status."
   }
 }

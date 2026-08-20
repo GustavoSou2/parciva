@@ -106,7 +106,9 @@ export async function registerPaymentAction(
     redirect(`/t/${tenantSlug}/contracts/${contractId}?error=${result.error}`);
   }
 
-  redirect(`/t/${tenantSlug}/contracts/${contractId}`);
+  // `justConfirmed` — gatilho real de mudança de estado pro cartão da
+  // parcela animar o check (CronogramaCards.tsx), nunca em visita normal.
+  redirect(`/t/${tenantSlug}/contracts/${contractId}?justConfirmed=1`);
 }
 
 export async function reversePaymentAction(

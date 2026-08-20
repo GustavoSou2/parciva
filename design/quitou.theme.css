@@ -1,44 +1,45 @@
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
+/**
+ * v4 "Acolhedor com Peso" — ver DESIGN.md. Fonte única de verdade dos
+ * tokens junto com quitou.tokens.json (que alimenta tailwind.config.ts).
+ * As duas camadas continuam existindo de propósito (arquitetura
+ * herdada, não trocada nesta rodada — reduz risco); só os VALORES
+ * mudaram. `--font-ui`/`--font-money`/`--font-machine` são setados por
+ * `next/font/google` em `src/app/layout.tsx` — nunca hardcoded aqui.
+ */
 @theme {
-  --color-ink: #0A0A0A;
-  --color-ink-50: #F5F5F5;
-  --color-ink-100: #E6E6E6;
-  --color-ink-200: #D5D5D5;
-  --color-ink-300: #BDBDBD;
-  --color-ink-400: #9A9A9A;
-  --color-ink-500: #8A8A8A;
-  --color-ink-600: #6B6B6B;
-  --color-ink-700: #4A4A4A;
-  --color-ink-800: #2E2E2E;
-  --color-ink-900: #0A0A0A;
+  --color-surface-canvas: #F7F6F3;
+  --color-surface-panel: #EFEEEA;
+  --color-surface-card: #FFFFFF;
+  --color-surface-raised: #FFFFFF;
+  --color-surface-inverse: #12140F;
 
-  --color-mint: #7CF5A5;
-  --color-mint-100: #D3FBE1;
-  --color-mint-200: #A6F8C4;
-  --color-mint-400: #4EE383;
-  --color-mint-600: #1F9C4F;
+  --color-content-primary: #12140F;
+  --color-content-secondary: #5C625F;
+  --color-content-muted: #9AA09C;
+  --color-content-on-inverse: #FFFFFF;
 
-  --color-canvas: #F1F1F1;
-  --color-panel: #E6E6E6;
-  --color-card: #FBFBFB;
-  --color-assistant: #2E2E2E;
-  --color-assistant-chip: #4A4A4A;
+  --color-line-hairline: #E4E5E1;
+  --color-line-strong: #D2D4CE;
 
-  --color-content: #0A0A0A;
-  --color-content-secondary: #6B6B6B;
-  --color-content-muted: #8A8A8A;
-  --color-content-on-assistant: #B8B8B8;
+  --color-state-open: #5C625F;
+  --color-state-open-pastel: #F7F6F3;
+  --color-state-review: #9A6A18;
+  --color-state-review-pastel: #FBF0D9;
+  --color-state-settled: #0F6B45;
+  --color-state-settled-pastel: #E1F3E8;
+  --color-state-overdue: #A0331F;
+  --color-state-overdue-pastel: #FBE6E1;
 
-  --color-hairline: #DCDCDC;
-  --color-axis: #D5D5D5;
+  --color-accent: #35D48A;
+  --color-accent-hover: #1F9C4F;
 
-  --color-data-actual: #0A0A0A;
-  --color-data-forecast: #BDBDBD;
-
-  --font-display: "Sofia Pro", "Poppins", "Questrial", ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "Sofia Pro", "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+  --font-num: var(--font-money), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-machine), ui-monospace, monospace;
 
   --text-display-xl: 4rem;
   --text-display-xl--line-height: 1.02;
@@ -57,14 +58,18 @@
   --text-micro--line-height: 1.3;
   --text-micro--letter-spacing: 0.09em;
 
-  --radius-card: 12px;
+  --radius-card: 16px;
+  --radius-control: 10px;
   --radius-field: 10px;
-  --radius-chip: 6px;
+  --radius-rail: 14px;
+  --radius-mini: 12px;
 
   --spacing-nav: 52px;
   --spacing-icon: 18px;
+  --spacing-sidebar: 228px; /* DESIGN.md §11 / style-guide.md §7 */
 
-  --shadow-card: none;
+  --shadow-none: none;
+  --shadow-card: 0 1px 2px rgba(18, 20, 15, 0.04);
 }
 
 @layer components {
@@ -73,5 +78,41 @@
     letter-spacing: var(--text-micro--letter-spacing);
     text-transform: uppercase;
     color: var(--color-content-secondary);
+  }
+
+  /*
+   * PROMPT_REFATORACAO.md — "shimmer de carregamento": gradiente que
+   * varre da esquerda pra direita em linha/fundo, usado por
+   * `Skeleton`/`CardSkeleton` (src/ui/components/Skeleton.tsx) nos
+   * `loading.tsx` de cada rota. Sem `prefers-reduced-motion`, cai pra
+   * um bloco estático — a régua de progresso já existe, isso não
+   * comunica nada crítico, então pode simplesmente não animar.
+   */
+  .animate-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      var(--color-line-hairline) 25%,
+      var(--color-surface-panel) 50%,
+      var(--color-line-hairline) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer-sweep 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes shimmer-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-shimmer {
+    animation: none;
+    background-image: none;
+    background-color: var(--color-line-hairline);
   }
 }

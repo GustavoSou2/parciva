@@ -1957,3 +1957,202 @@ desativar/reativar pagador alterna `status` sem tocar `contracts`.
 `pnpm check` completo (lint + tipos + 344 testes) passa limpo. Reverter
 um cancelamento de contrato (reabrir) não foi pedido — se vier a ser
 necessário, é simétrico a "reativar" pagador, fica para quando pedido.
+
+---
+
+## [35] Fase 5 — Camada C (comportamento): pool de peso próprio, aditivo
+
+**Data:** 19/08/2026 (`docs/tasks/fase-5/02-camada-c-comportamento.md`)
+
+**Contexto:** O módulo `fraud` (fatia 1, decisão [29]) só cobria Camada
+A/B (`amount_match`/`date_plausible`/`e2e_reuse`), determinísticos.
+Faltavam os 4 checks de Camada C (spec §8.1): `VELOCITY` (rajada de
+comprovantes fora do padrão do pagador), `HISTORY` (pagador sem
+histórico enviando valor desproporcional), `AMOUNT_PATTERN` (mesmo
+valor exato reaproveitado entre pagadores diferentes) e `PHONE_CHANGE`
+(telefone de origem diferente do cadastrado — cenário C-18 da spec).
+Escolhida em vez de "Camada A/B forense" (`fase-5/01-...md`) porque não
+exige dependência nova nem schema novo — todo dado necessário já
+existia (`payments`, `installments`/`contracts`, `payers.phoneE164`, e
+`fromPhone`, que a identificação de pagador já recebia mas descartava
+depois de usar).
+
+**Decisão:**
+- **`FraudCheckResult` já reservava `"warn"`** para exatamente este
+  caso (comentário do próprio `types.ts` desde a fatia 1). Os 4 checks
+  novos produzem `"warn"` quando disparam, nunca `"fail"` — `fail`
+  fica reservado a Camada A/B. `FORCES_REVIEW` só olha `"fail"`, então
+  nenhum check de Camada C força revisão sozinho, por construção, sem
+  guarda adicional.
+- **Pool de peso separado, não compartilhado com Camada A/B.**
+  Primeira tentativa foi adicionar os 4 pesos novos direto em
+  `CHECK_WEIGHTS` e somar tudo num único `TOTAL_WEIGHT` — quebrou um
+  teste existente (`amount_match` + `date_plausible` falhando juntos
+  parou de ultrapassar `DEFAULT_RISK_SCORE_THRESHOLD` sozinho, porque
+  diluir o denominador com mais peso reduz a fração de qualquer
+  combinação antiga). Corrigido: `BEHAVIORAL_CHECK_WEIGHTS` é um pool
+  próprio (`velocity: 20`, `history: 15`, `amount_pattern: 20`,
+  `phone_change: 30`), normalizado dentro de si mesmo e então somado
+  como incremento ADITIVO e LIMITADO ao score de Camada A/B
+  (`BEHAVIORAL_MAX_CONTRIBUTION = 30` pontos no máximo, mesmo com os 4
+  disparando juntos — abaixo do limiar de 50, então Camada C nunca
+  bloqueia sozinha, nem por acúmulo). `riskScore = min(100, abScore +
+  behavioralScore)`. Camada A/B mantém exatamente o cálculo/
+  comportamento de antes desta fatia — a chegada de mais checks
+  probabilísticos (Camada B forense, quando existir) deve seguir o
+  mesmo padrão de pool próprio, nunca diluir o pool determinístico.
+- **`HISTORY` usa a média das PRÓPRIAS parcelas do pagador como
+  baseline** (não a média do tenant inteiro) — por construção, isso
+  quase nunca dispara pro caso "primeira parcela grande de contrato
+  novo" que o critério de aceite pede pra não forçar revisão: o valor
+  já bate com uma parcela real do próprio pagador, porque
+  `selectTarget` garante isso antes de a alocação chegar aqui.
+  Simplificação consciente, não é lacuna — documentada em
+  `fraud/domain/behavior.ts` e no README do módulo.
+- **`VELOCITY`** compara a contagem de pagamentos aceitos do pagador
+  numa janela de 24h contra a taxa diária histórica dele (calculada
+  ANTES da janela, pra rajada não "normalizar" a si mesma), com piso
+  absoluto de 3 (evita disparar com 1-2 comprovantes num dia) e piso
+  de taxa de 1/dia (evita multiplicar por zero em pagador sem
+  histórico).
+- **`AMOUNT_PATTERN`** conta pagadores DISTINTOS (excluindo o próprio)
+  com pagamento aceito no mesmo valor exato, janela de 30 dias —
+  distinto de `e2e_reuse` (mesmo E2E ID, não o mesmo valor).
+- **`PHONE_CHANGE`** só é sinal quando a identificação NÃO foi por
+  telefone — se foi, `fromPhone` e `payers.phoneE164` já batem por
+  definição (`payers/domain/identification.ts`). `ReceiptPaymentInput`
+  ganhou `fromPhone`/`payerPhoneE164` (opcionais); `process-receipt-
+  extraction.ts` repassa os dois — `payerPhoneE164` já estava em
+  memória (`deps.listPayers()` já tinha carregado todos os pagadores
+  pra rodar `identifyPayer`), nunca uma query nova só pra isso.
+- **Agregados buscados dentro da MESMA transação** que trava as
+  parcelas e decide auto-aplicar (`fraud/infra/behavior-repository.ts`,
+  recebendo `db: TenantDb` já aberto — mesmo padrão de
+  `fraud-check-repository.ts`/`recordFraudChecksTx`), nunca uma
+  consulta separada com `TenantContext` próprio, e nunca bypass de RLS.
+
+**Alternativas descartadas:** Diluir `CHECK_WEIGHTS` com os 4 pesos
+novos num único pool (rejeitada — quebra silenciosamente o
+comportamento de score de Camada A/B, pego pelo próprio teste
+existente antes de chegar em produção). Baseline de `HISTORY` pela
+média do tenant inteiro em vez da média das próprias parcelas do
+pagador (mais sensível a fraude real, mas rejeitada por ora — exigiria
+uma query nova tenant-wide e o critério de aceite já cobre o caso mais
+importante de falso positivo com a baseline mais simples).
+
+**Consequências:** `fraud_checks` agora grava 7 linhas por comprovante
+avaliado (3 Camada A/B + 4 Camada C), sempre — a fila de revisão
+(`/t/<slug>/review/<id>`) já lê `listFraudChecksByReceipt` sem mudança,
+então os 4 checks novos aparecem pro revisor automaticamente. Nenhuma
+migração de banco — os 4 checks usam só tabelas/colunas que já
+existiam. `pnpm test`/`pnpm exec tsc --noEmit`/`pnpm exec eslint`
+passam limpos (26 testes novos em `fraud/domain/{behavior,evaluate}
+.test.ts`); verificação manual ponta a ponta contra Postgres real
+**não foi feita nesta tarefa** — Docker Desktop não estava rodando no
+ambiente de execução, pendência registrada em PROGRESS.md.
+
+---
+
+## [36] MFA (TOTP) opt-in para owner/admin — sem forçar contas existentes
+
+**Data:** 19/08/2026 (`docs/tasks/fase-0/01-mfa-owner-admin.md`)
+
+**Contexto:** Única lacuna de segurança da spec §10.2 adiada desde o
+Marco 2 (decisão [15]: "MFA vira marco próprio"). `users.mfaEnabled`/
+`mfaSecretRef` existiam no schema desde a fundação, nunca escritos por
+código nenhum. Duas perguntas resolvidas com o usuário antes de
+implementar (ver histórico da sessão):
+
+1. **Enforcement obrigatório para owner/admin fica fora de escopo** —
+   construir só o mecanismo (ativar/verificar/desativar), disponível
+   pra qualquer usuário, sem bloquear login de conta owner/admin que
+   ainda não ativou. Forçar agora bloquearia toda conta existente,
+   inclusive a do próprio usuário, sem aviso prévio — risco maior do
+   que o problema que resolve nesta fatia.
+2. **QR code usa a dependência `qrcode`** (npm, pura JS, sem binding
+   nativo) — TOTP em si (RFC 6238/4226) é hand-rolled com `node:crypto`
+   (mesmo padrão de `identity/domain/session.ts`), mas gerar QR de
+   verdade não é pequeno o bastante pra reimplementar.
+
+**Decisão:**
+- **"Cofre" do segredo TOTP = `ENCRYPTION_KEY` + AES-256-GCM local**
+  (`src/shared/crypto.ts`, novo — fecha a lacuna que `PROGRESS.md` já
+  registrava, "`src/shared/{crypto,errors}.ts` não existem"). O
+  projeto não tem vault separado (ADR-9, auto-hospedado sem serviço de
+  nuvem gerenciado) — `ENCRYPTION_KEY` já estava reservada em
+  `.env.example`/`docs/quitou-setup.md` desde a fundação, nunca usada.
+  `mfaSecretRef` guarda só o ciphertext (`iv:authTag:ciphertext`,
+  IV aleatório por chamada); a chave que destrava vive fora do banco
+  (env hoje, `systemd credentials` em produção — spec §10.2). Satisfaz
+  o invariante 7 do CLAUDE.md sem inventar um serviço novo.
+- **TOTP hand-rolled** (`identity/domain/totp.ts`): HOTP (RFC 4226,
+  HMAC-SHA1 + truncamento dinâmico) validado contra o vetor de teste
+  oficial da RFC 4226 Apêndice D (`secret = "12345678901234567890"`,
+  contador 0–9); TOTP (RFC 6238) por cima, janela de tolerância de
+  ±30s pra drift de relógio do celular.
+- **Challenge de login stateless** (`identity/domain/mfa-challenge.ts`),
+  mesmo padrão de `deriveCsrfToken`: HMAC sobre `SESSION_SECRET` (sem
+  env var nova, domain-separado do CSRF por um prefixo `mfa:` no
+  payload assinado), TTL de 5 min embutido no próprio token — sem
+  tabela nem coluna nova. `login()` (`identity/application/login.ts`)
+  devolve `{ kind: "mfa_required", challengeToken }` em vez de criar
+  sessão quando `mfaEnabled`; só `verify-mfa-login.ts` (segunda etapa,
+  `POST /api/auth/mfa-verify`, rate-limited) cria a sessão de verdade.
+- **Códigos de recuperação**: tabela nova `mfa_recovery_codes` (raiz,
+  sem `tenant_id` — MFA é do usuário, não do tenant; migração aditiva
+  pura, `0021_flowery_riptide.sql`). Só o hash (`hashToken`, mesmo
+  SHA-256 de sessão/convite) é persistido; 10 códigos gerados na
+  confirmação da ativação, mostrados em claro **uma única vez**, cada
+  um consumido atomicamente (`UPDATE ... WHERE used_at IS NULL`).
+- **Ativação em duas etapas**: `startMfaEnrollment` grava o segredo
+  cifrado como PENDENTE (`mfaEnabled` continua `false`);
+  `confirmMfaEnrollment` só ativa depois que o usuário prova posse do
+  app autenticador digitando o código do momento — nunca ativa "no
+  escuro". **Desativação exige senha atual** (`disableMfaWithPassword`,
+  mesma `verifyPassword` do login) — nunca um toggle sem fricção,
+  critério de aceite explícito da tarefa.
+- **UI em `/account/security`, fora do namespace `/t/<slug>/`** — MFA é
+  propriedade do usuário (`users.mfaEnabled`), não do tenant; o mesmo
+  usuário pode ser `owner` numa empresa e `viewer` noutra. Nova
+  `requireGlobalSession` (`app/_lib/`), mesmo padrão de
+  `requireTenantSession` mas sem resolver tenant. Ativação usa
+  componente cliente (`ActivateMfaSection.tsx`) chamando Server
+  Actions diretamente (não `<form action={}>`) — exceção deliberada ao
+  padrão da decisão [16]: mostrar QR, esperar confirmação e revelar
+  códigos de recuperação uma única vez é interatividade real, o tipo
+  que a própria decisão [16] já previa como justificativa pra sair do
+  formulário puro. Desativação continua formulário simples com
+  redirect, sem exceção.
+
+**Alternativas descartadas:** Bloquear login de owner/admin sem MFA
+assim que a tarefa terminasse (rejeitada pelo usuário — quebraria
+contas existentes sem aviso). Lib de TOTP pronta tipo `otplib`
+(rejeitada — mesmo raciocínio das decisões [6]/[15]: TOTP é pequeno e
+bem especificado o bastante pra não justificar dependência, ao
+contrário de QR code). Guardar o segredo TOTP em texto claro "porque é
+só um segredo interno" (rejeitada — é exatamente o que o invariante 7
+do CLAUDE.md proíbe).
+
+**Consequências:** Qualquer rota nova que crie sessão a partir de
+senha (hoje só login) precisa decidir explicitamente o que fazer com
+`mfaEnabled` — não é mais seguro assumir que senha certa = sessão
+imediata. `pnpm exec tsc --noEmit`/`pnpm exec eslint`/`pnpm exec
+vitest run` (351 testes, incluindo os novos de `totp`/`mfa-challenge`/
+`recovery-codes`/`crypto`/aplicação) passam limpos.
+
+**Atualização (19/08/2026, mesmo dia):** Docker ficou disponível depois
+de escrita esta decisão — migração `0021_flowery_riptide.sql` aplicada
+com sucesso contra Postgres real (`pnpm db:migrate`, tabela
+`mfa_recovery_codes` e colunas `users.mfa_enabled`/`mfa_secret_ref`
+confirmadas no schema). Verificação ponta a ponta rodada via script
+descartável contra os módulos reais (removido ao final, mesmo padrão
+de todo marco anterior): usuário de teste criado → login sem MFA cria
+sessão direto → `startMfaEnrollment`/código errado rejeitado/código
+certo ativa e gera 10 códigos de recuperação → login com MFA ativo
+devolve challenge, nunca sessão direta → código TOTP errado rejeitado,
+código certo cria sessão → código de recuperação funciona uma vez,
+segunda tentativa do MESMO código falha (consumo atômico confirmado
+contra banco real, não só no mock do teste unitário) → desativar com
+senha errada falha, MFA continua ativo → desativar com senha certa
+funciona → login volta a criar sessão direto. Todos os 13 passos
+passaram na primeira tentativa, sem achado novo.

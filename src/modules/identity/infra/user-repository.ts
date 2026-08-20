@@ -14,11 +14,19 @@ export interface UserRecord {
   readonly email: string;
   readonly name: string;
   readonly passwordHash: string | null;
+  readonly mfaEnabled: boolean;
   readonly status: string;
 }
 
 function toUser(row: typeof users.$inferSelect): UserRecord {
-  return { id: row.id, email: row.email, name: row.name, passwordHash: row.passwordHash, status: row.status };
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    passwordHash: row.passwordHash,
+    mfaEnabled: row.mfaEnabled,
+    status: row.status,
+  };
 }
 
 export async function getUserByEmail(email: string): Promise<UserRecord | null> {
