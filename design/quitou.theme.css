@@ -2,39 +2,78 @@
 @config "../tailwind.config.ts";
 
 /**
- * v4 "Acolhedor com Peso" — ver DESIGN.md. Fonte única de verdade dos
- * tokens junto com quitou.tokens.json (que alimenta tailwind.config.ts).
- * As duas camadas continuam existindo de propósito (arquitetura
- * herdada, não trocada nesta rodada — reduz risco); só os VALORES
- * mudaram. `--font-ui`/`--font-money`/`--font-machine` são setados por
- * `next/font/google` em `src/app/layout.tsx` — nunca hardcoded aqui.
+ * v6 "Confiança Viva" — ver DESIGN.md. Substitui integralmente v4/v5.
+ * Fonte única de verdade dos tokens junto com quitou.tokens.json (que
+ * alimenta tailwind.config.ts). `--font-ui`/`--font-money`/`--font-machine`
+ * são setados por `next/font/google` em `src/app/layout.tsx` — nunca
+ * hardcoded aqui.
  */
 @theme {
-  --color-surface-canvas: #F7F6F3;
-  --color-surface-panel: #EFEEEA;
+  /* Base neutra — estrutura */
+  --color-surface-canvas: #F6F6FA;
+  --color-surface-panel: #EFEFF7;
   --color-surface-card: #FFFFFF;
   --color-surface-raised: #FFFFFF;
-  --color-surface-inverse: #12140F;
+  --color-surface-inverse: #12131A;
 
-  --color-content-primary: #12140F;
-  --color-content-secondary: #5C625F;
-  --color-content-muted: #9AA09C;
+  --color-content-primary: #12131A;
+  --color-content-secondary: #5C5F6E;
+  --color-content-muted: #9A9DAE;
   --color-content-on-inverse: #FFFFFF;
 
-  --color-line-hairline: #E4E5E1;
-  --color-line-strong: #D2D4CE;
+  --color-line-hairline: #E6E7F0;
+  --color-line-strong: #D3D5E3;
 
-  --color-state-open: #5C625F;
-  --color-state-open-pastel: #F7F6F3;
-  --color-state-review: #9A6A18;
-  --color-state-review-pastel: #FBF0D9;
-  --color-state-settled: #0F6B45;
-  --color-state-settled-pastel: #E1F3E8;
-  --color-state-overdue: #A0331F;
-  --color-state-overdue-pastel: #FBE6E1;
+  /* Acento de marca — DESIGN.md §2.2, papel amplo (botão/nav/link/foco/CTA) */
+  --color-accent: #4F46E5;
+  --color-accent-hover: #4338CA;
+  --color-accent-soft: #EEF0FD;
 
-  --color-accent: #35D48A;
-  --color-accent-hover: #1F9C4F;
+  /* Cor de dado — DESIGN.md §2.3/§7.7, exclusiva de gráfico/gauge/spotlight */
+  --color-data-1: #2EC6E0;
+  --color-data-2: #7C6FF0;
+  --color-data-1-soft: #E4F6FA;
+  --color-data-2-soft: #ECEAFB;
+  --color-data-3: #F5A623; /* só para 3º segmento de funil/comparação, DESIGN.md §7.7 */
+  --opacity-hatch: 0.35; /* período anterior em barra de comparação — mesmo tom, hachurado */
+
+  /* Tendência de métrica — DESIGN.md §2.4, distinta de estado */
+  --color-trend-up: #16A34A;
+  --color-trend-down: #DC2626;
+
+  /* Estado de parcela — DESIGN.md §2.5 */
+  --color-state-installment-open: #5C5F6E;
+  --color-state-installment-open-pastel: #F6F6FA;
+  --color-state-installment-review: #9A6A18;
+  --color-state-installment-review-pastel: #FBF0D9;
+  --color-state-installment-settled: #0F6B45;
+  --color-state-installment-settled-pastel: #E1F3E8;
+  --color-state-installment-overdue: #A0331F;
+  --color-state-installment-overdue-pastel: #FBE6E1;
+
+  /* Estado de contrato/pagador — DESIGN.md §2.5, vocabulário novo na v6 */
+  --color-state-contract-active: #0F6B45;
+  --color-state-contract-active-pastel: #E1F3E8;
+  --color-state-contract-closed: #5C5F6E;
+  --color-state-contract-closed-pastel: #F6F6FA;
+  --color-state-contract-suspended: #9A6A18;
+  --color-state-contract-suspended-pastel: #FBF0D9;
+  --color-state-contract-delinquent: #A0331F;
+  --color-state-contract-delinquent-pastel: #FBE6E1;
+
+  /* Chip de categoria — DESIGN.md §2.6/§7.4, só linha de lista densa */
+  --color-chip-1: #E4F6FA;
+  --color-chip-2: #ECEAFB;
+  --color-chip-3: #FBF0D9;
+  --color-chip-4: #EEF0FD;
+
+  /* Indicador ao vivo — DESIGN.md §2.7 */
+  --color-live-dot: #16A34A;
+
+  /* Ranking — DESIGN.md §2.8, só posições 1–3 */
+  --color-ranking-1: #D4A017;
+  --color-ranking-2: #9CA3AF;
+  --color-ranking-3: #B45309;
 
   --font-display: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
   --font-sans: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
@@ -66,13 +105,165 @@
 
   --spacing-nav: 52px;
   --spacing-icon: 18px;
-  --spacing-sidebar: 228px; /* DESIGN.md §11 / style-guide.md §7 */
+  --spacing-sidebar: 228px;
+  --spacing-rail: 296px;
 
   --shadow-none: none;
   --shadow-card: 0 1px 2px rgba(18, 20, 15, 0.04);
+
+  --bp-sm: 640px;
+  --bp-md: 768px;
+  --bp-lg: 1024px;
+  --bp-xl: 1280px;
+
+  /* Arquitetura de grid — DESIGN.md §4.7, bento assimétrico (camada de resumo) */
+  --grid-cols: 12;
+  --grid-gutter: 16px;
 }
 
 @layer components {
+  /* DESIGN.md §4.2 — no máximo um por tela junto com .cartao-spotlight */
+  .cartao-cta {
+    background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 130%);
+    color: var(--color-content-on-inverse);
+    border-radius: var(--radius-card);
+    padding: 20px;
+  }
+
+  /* DESIGN.md §7.2 — no máximo um por tela junto com .cartao-cta */
+  .cartao-spotlight {
+    background: linear-gradient(135deg, var(--color-data-2) 0%, var(--color-accent-hover) 130%);
+    color: var(--color-content-on-inverse);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* DESIGN.md §7.1 — anel de métrica única, distinto de donut de composição */
+  .gauge-arco {
+    stroke: var(--color-data-1);
+  }
+  .gauge-trilho {
+    stroke: var(--color-line-hairline);
+  }
+
+  /* DESIGN.md §7.4 — fundo tintado só em ícone de linha de lista densa */
+  .chip-icone {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+  }
+
+  /* DESIGN.md §7.5 — selo de tendência, sempre com período nomeado ao lado */
+  .selo-tendencia-alta {
+    color: var(--color-trend-up);
+  }
+  .selo-tendencia-baixa {
+    color: var(--color-trend-down);
+  }
+
+  /* DESIGN.md §6 — tooltip de dado, sempre rótulo temporal + valor */
+  .tooltip-dado {
+    background: var(--color-surface-inverse);
+    color: var(--color-content-on-inverse);
+    border-radius: var(--radius-field);
+    padding: 10px 12px;
+    font-size: var(--text-aux);
+  }
+
+  /* DESIGN.md §2.7 — só quando há polling/websocket real por trás */
+  .live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--color-live-dot);
+    animation: live-pulse 1.6s ease-in-out infinite;
+  }
+
+  /* DESIGN.md §5 / §7.6 — só posições 1–3 de ranking */
+  .ranking-icone-1 { color: var(--color-ranking-1); }
+  .ranking-icone-2 { color: var(--color-ranking-2); }
+  .ranking-icone-3 { color: var(--color-ranking-3); }
+
+  /* DESIGN.md Anexo A / §10 — cartão de conteúdo secundário (rail), um degrau abaixo do cartão principal */
+  .cartao-rail {
+    background: var(--color-surface-card);
+    border: 1px solid var(--color-line-hairline);
+    border-radius: var(--radius-rail);
+    padding: 16px 18px;
+  }
+
+  /* DESIGN.md §4.5 — badge de contagem/novidade na sidebar */
+  .badge-contagem {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--color-accent);
+    color: var(--color-content-on-inverse);
+    font-size: var(--text-micro);
+  }
+  .badge-contagem--urgente {
+    background: var(--color-trend-down);
+  }
+  .badge-novidade {
+    border-radius: 999px;
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    font-size: var(--text-micro);
+    padding: 2px 8px;
+  }
+
+  /* DESIGN.md §4.3 — chip de seletor de tenant, sempre visível na topbar */
+  .chip-tenant {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-line-hairline);
+    padding: 6px 10px;
+    background: var(--color-surface-card);
+  }
+
+  /* DESIGN.md §4.4 — filtro ativo removível */
+  .chip-filtro {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    padding: 4px 10px;
+    font-size: var(--text-aux);
+  }
+
+  /* DESIGN.md §4.6 — composição de fundo sutil, nunca atrás de card com dado */
+  .composicao-blob {
+    position: absolute;
+    filter: blur(80px);
+    opacity: 0.12;
+    pointer-events: none;
+  }
+
+  /* DESIGN.md §7.9 — valor em risco, sempre com composição ao lado, nunca número solto */
+  .valor-em-risco {
+    color: var(--color-trend-down);
+  }
+  .area-projecao-hachurada {
+    opacity: var(--opacity-hatch, 0.35);
+  }
+
+  /* DESIGN.md §7.8 — avatar de contraparte, cor varia por identidade (hash simples), nunca todo no mesmo tom */
+  .avatar-contraparte-1 { background: var(--color-chip-1); }
+  .avatar-contraparte-2 { background: var(--color-chip-2); }
+  .avatar-contraparte-3 { background: var(--color-chip-3); }
+  .avatar-contraparte-4 { background: var(--color-chip-4); }
+
   .label-micro {
     font-size: var(--text-micro);
     letter-spacing: var(--text-micro--letter-spacing);
@@ -80,14 +271,6 @@
     color: var(--color-content-secondary);
   }
 
-  /*
-   * PROMPT_REFATORACAO.md — "shimmer de carregamento": gradiente que
-   * varre da esquerda pra direita em linha/fundo, usado por
-   * `Skeleton`/`CardSkeleton` (src/ui/components/Skeleton.tsx) nos
-   * `loading.tsx` de cada rota. Sem `prefers-reduced-motion`, cai pra
-   * um bloco estático — a régua de progresso já existe, isso não
-   * comunica nada crítico, então pode simplesmente não animar.
-   */
   .animate-shimmer {
     background-image: linear-gradient(
       90deg,
@@ -101,12 +284,13 @@
 }
 
 @keyframes shimmer-sweep {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -114,5 +298,9 @@
     animation: none;
     background-image: none;
     background-color: var(--color-line-hairline);
+  }
+  .live-dot {
+    animation: none;
+    opacity: 1;
   }
 }

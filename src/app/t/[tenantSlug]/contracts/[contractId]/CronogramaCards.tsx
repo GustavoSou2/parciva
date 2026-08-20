@@ -2,9 +2,9 @@
 
 /**
  * Tela-bandeira do refinamento de UI (DECISIONS.md) — cronograma de
- * parcelas deixa de ser tabela crua e vira lista de cartões
- * (DESIGN.md/style-guide.md §4.2), com uma régua-resumo do progresso
- * do contrato e dois momentos de movimento reais:
+ * parcelas deixa de ser tabela crua e vira lista de cartões, com uma
+ * régua-resumo do progresso do contrato e dois momentos de movimento
+ * reais:
  *
  * 1. Entrada em stagger quando a lista aparece (`scale 0.97→1,
  *    back.out(1.2)`, ~40ms entre cartões) — toca sempre que a lista
@@ -39,10 +39,10 @@ import { StatusChip, getCardStateBg, getStatusGroup } from "@/ui/components/Stat
 import { usePrefersReducedMotion } from "@/ui/motion/reduced-motion";
 
 const RULER_SEGMENT_COLOR: Record<string, string> = {
-  open: "bg-state-open",
-  review: "bg-state-review",
-  settled: "bg-state-settled",
-  overdue: "bg-state-overdue",
+  open: "bg-state-installment-open",
+  review: "bg-state-installment-review",
+  settled: "bg-state-installment-settled",
+  overdue: "bg-state-installment-overdue",
 };
 
 /** Qualquer elemento SVG com geometria (path/polyline/circle/line) — os ícones do lucide-react usam formas diferentes por ícone, nunca só `<path>`. */
@@ -117,8 +117,8 @@ export function CronogramaCards({
   return (
     <div className="flex flex-col gap-card-gap">
       {/*
-        Régua-resumo: reta de propósito, sem raio (style-guide.md §8 /
-        DESIGN.md §4 — "todo elemento arredondado tem um contraponto
+        Régua-resumo: reta de propósito, sem raio (DESIGN.md v6 §1
+        princípio 4 — "todo elemento arredondado tem um contraponto
         reto", a régua é esse contraponto e não pode virar mais uma
         forma arredondada igual ao cartão/pílula).
       */}
@@ -184,7 +184,7 @@ export function CronogramaCards({
                   {isSettledJustNow ? toDisplayReais(money(0)) : <Money value={installment.amountCents} />}
                 </span>
                 {group === "settled" && (
-                  <Check data-settled-check className="size-4 text-state-settled" strokeWidth={1.75} />
+                  <Check data-settled-check className="size-4 text-state-installment-settled" strokeWidth={1.75} />
                 )}
               </div>
               {installment.paidCents > 0 && (

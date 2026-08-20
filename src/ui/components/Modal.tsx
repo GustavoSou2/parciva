@@ -15,6 +15,11 @@
  * nunca uma versão "simplificada". `backdrop-blur` é enhancement
  * progressivo (PROMPT_REFATORACAO.md linha 37/43) — sem suporte, o véu
  * fica sólido e ainda funciona.
+ *
+ * Responsividade (DESIGN.md v6 §9): abaixo de `--bp-sm`
+ * (640px) o modal vira a própria tela — `inset: 0`, sem raio nas bordas
+ * externas — em vez de flutuar centrado sobre o conteúdo de baixo, que
+ * numa tela pequena sobraria só uma faixa apertada de véu ao redor.
  */
 
 import { useEffect, useRef, type ReactNode } from "react";
@@ -46,7 +51,7 @@ export function Modal({ children }: { children: ReactNode }) {
       };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-card-pad">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-card-pad">
       <div
         className="absolute inset-0 bg-surface-canvas/85 backdrop-blur-md"
         onClick={() => router.back()}
@@ -57,14 +62,14 @@ export function Modal({ children }: { children: ReactNode }) {
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
-        className="relative z-10 w-full max-w-lg rounded-card border-hairline border-line-hairline bg-surface-card p-card-pad shadow-card focus:outline-none"
+        className="relative z-10 h-full w-full max-w-none overflow-y-auto rounded-none border-hairline border-line-hairline bg-surface-card p-card-pad shadow-card focus:outline-none sm:h-auto sm:max-w-lg sm:rounded-card"
         {...motionProps}
       >
         <button
           type="button"
           onClick={() => router.back()}
           aria-label="Fechar"
-          className="absolute top-4 right-4 rounded-control p-1 text-content-secondary transition-colors hover:bg-surface-panel hover:text-content-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-content-primary/20"
+          className="absolute top-4 right-4 rounded-control p-1 text-content-secondary transition-colors hover:bg-surface-panel hover:text-content-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
           <X className="size-4" strokeWidth={1.75} />
         </button>

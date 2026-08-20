@@ -24,10 +24,10 @@ import { AlertTriangle, CheckCircle2, type LucideIcon } from "lucide-react";
 type StateGroup = "open" | "review" | "settled" | "overdue";
 
 const GROUP_STYLE: Record<StateGroup, { bg: string; text: string }> = {
-  open: { bg: "bg-state-open-pastel", text: "text-state-open" },
-  review: { bg: "bg-state-review-pastel", text: "text-state-review" },
-  settled: { bg: "bg-state-settled-pastel", text: "text-state-settled" },
-  overdue: { bg: "bg-state-overdue-pastel", text: "text-state-overdue" },
+  open: { bg: "bg-state-installment-open-pastel", text: "text-state-installment-open" },
+  review: { bg: "bg-state-installment-review-pastel", text: "text-state-installment-review" },
+  settled: { bg: "bg-state-installment-settled-pastel", text: "text-state-installment-settled" },
+  overdue: { bg: "bg-state-installment-overdue-pastel", text: "text-state-installment-overdue" },
 };
 
 const GROUP_ICON: Partial<Record<StateGroup, LucideIcon>> = {
@@ -93,6 +93,76 @@ export function StatusChip({ status }: { status: keyof typeof STATUS }) {
       className={`inline-flex items-center gap-1 rounded-pill px-2.5 py-0.5 font-mono text-micro tracking-micro uppercase ${style.bg} ${style.text} ${def.voided ? "line-through" : ""}`}
     >
       {Icon && <Icon className="size-3" strokeWidth={1.75} />}
+      {def.label}
+    </span>
+  );
+}
+
+/**
+ * Vocabulário de estado de CONTRATO/PAGADOR — DESIGN.md v6 §2.5, lacuna
+ * identificada na reescrita v6: `contracts.status`/`payers.status`
+ * respondem "esse relacionamento está ativo", pergunta diferente da que
+ * `StatusChip`/`STATUS` acima respondem pra parcela ("essa cobrança
+ * específica está em que fase") — por isso vocabulário e tokens
+ * (`state-contract-*`) próprios, nunca reaproveitando `state-installment-*`.
+ *
+ * Só os 2 valores que o schema de fato grava hoje (varredura confirmou
+ * nenhum código escrevendo outro valor): "suspenso"/"inadimplente"
+ * existem no vocabulário de cor (DESIGN.md tem os 4 tokens prontos) mas
+ * não têm estado real no banco pra mapear — não inventados aqui. Se/
+ * quando `contracts.status`/`payers.status` ganharem esses valores, é
+ * só estender `CONTRACT_STATUS`/`PAYER_STATUS`.
+ *
+ * `getContractCardBg`/`getPayerCardBg` (fundo sólido do card inteiro)
+ * removidos nesta rodada (DESIGN.md v6 §7.8, revisão de §2.5) — em
+ * lista com múltiplos itens do mesmo estado, fundo sólido por linha
+ * virava um bloco de cor uniforme sem sinalizar nada; só a pílula
+ * continua. Fundo sólido de card único em destaque (fora de lista,
+ * ex. cartão de parcela) continua sendo `getCardStateBg`, acima, que
+ * não muda.
+ */
+type EntityStateGroup = "active" | "closed" | "suspended" | "delinquent";
+
+const ENTITY_GROUP_STYLE: Record<EntityStateGroup, { bg: string; text: string }> = {
+  active: { bg: "bg-state-contract-active-pastel", text: "text-state-contract-active" },
+  closed: { bg: "bg-state-contract-closed-pastel", text: "text-state-contract-closed" },
+  suspended: { bg: "bg-state-contract-suspended-pastel", text: "text-state-contract-suspended" },
+  delinquent: { bg: "bg-state-contract-delinquent-pastel", text: "text-state-contract-delinquent" },
+};
+
+type ContractStatus = "active" | "cancelled";
+
+const CONTRACT_STATUS: Record<ContractStatus, { label: string; group: EntityStateGroup }> = {
+  active: { label: "Ativo", group: "active" },
+  cancelled: { label: "Encerrado", group: "closed" },
+};
+
+export function ContractStatusChip({ status }: { status: ContractStatus }) {
+  const def = CONTRACT_STATUS[status];
+  const style = ENTITY_GROUP_STYLE[def.group];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-pill px-2.5 py-0.5 font-mono text-micro tracking-micro uppercase ${style.bg} ${style.text}`}
+    >
+      {def.label}
+    </span>
+  );
+}
+
+type PayerStatus = "active" | "inactive";
+
+const PAYER_STATUS: Record<PayerStatus, { label: string; group: EntityStateGroup }> = {
+  active: { label: "Ativo", group: "active" },
+  inactive: { label: "Inativo", group: "closed" },
+};
+
+export function PayerStatusChip({ status }: { status: PayerStatus }) {
+  const def = PAYER_STATUS[status];
+  const style = ENTITY_GROUP_STYLE[def.group];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-pill px-2.5 py-0.5 font-mono text-micro tracking-micro uppercase ${style.bg} ${style.text}`}
+    >
       {def.label}
     </span>
   );

@@ -16,10 +16,10 @@ export type ButtonVariant = "primary" | "secondary";
  */
 export function buttonClassName(variant: ButtonVariant = "primary", className = ""): string {
   const base =
-    "inline-block rounded-control px-4 py-2 text-body font-medium transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-content-primary/20 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-canvas disabled:cursor-not-allowed disabled:opacity-50";
+    "inline-block rounded-control px-4 py-2 text-body font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-canvas disabled:cursor-not-allowed disabled:opacity-50";
   const styles =
     variant === "primary"
-      ? "bg-surface-inverse text-content-on-inverse hover:opacity-90"
+      ? "bg-accent text-content-on-inverse hover:bg-accent-hover"
       : "border-hairline border-line-hairline bg-surface-card text-content-primary hover:bg-surface-panel";
   return `${base} ${styles} ${className}`;
 }

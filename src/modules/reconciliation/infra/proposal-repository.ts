@@ -6,7 +6,7 @@
  * sempre é gravada, auto-aplicada ou não; nunca condicional.
  */
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb, type TenantContext, type TenantDb } from "@/db/client";
 import { reconciliationProposals } from "@/db/schema/financial";
 import type { AllocationLine, Proposal, ProposalDecision } from "../domain/types";
@@ -82,6 +82,26 @@ export async function listProposalsByDecision(
       .orderBy(desc(reconciliationProposals.createdAt)),
   );
   return rows.map(toProposal);
+}
+
+/**
+ * Só a contagem, sem trazer as colunas todas (`proposed_allocations`
+ * jsonb incluso) — usado pelo badge de contagem da sidebar (DESIGN.md v6
+ * §4.5), que roda em toda página do tenant (`layout.tsx`), não só em
+ * `/review`. `listProposalsByDecision` já existe pra quando o CONTEÚDO
+ * da fila é necessário; isso é só pro número.
+ */
+export async function countProposalsByDecision(
+  ctx: TenantContext,
+  decision: ProposalDecision,
+): Promise<number> {
+  const rows = await getDb(ctx, (db) =>
+    db
+      .select({ count: sql<string>`count(*)` })
+      .from(reconciliationProposals)
+      .where(and(eq(reconciliationProposals.tenantId, ctx.tenantId), eq(reconciliationProposals.decision, decision))),
+  );
+  return Number(rows[0]?.count ?? 0);
 }
 
 export async function getProposalById(ctx: TenantContext, proposalId: string): Promise<Proposal | null> {

@@ -16,6 +16,7 @@ function buildContract(overrides: Partial<Contract> = {}): Contract {
     toleranceCents: money(0),
     startDate: "2026-01-01",
     status: "active",
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
     ...overrides,
   };
 }

@@ -23,9 +23,10 @@ export {
   getContractById,
   getInstallmentById,
   listContracts,
+  listContractRiskInfo,
   listContractsByPayer,
   listInstallmentsByContract,
   lockInstallmentsByContractTx,
   updateInstallmentTx,
 } from "./infra/contract-repository";
-export type { ContractSummary } from "./infra/contract-repository";
+export type { ContractSummary, ContractRiskInfo } from "./infra/contract-repository";

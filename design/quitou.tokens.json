@@ -1,30 +1,46 @@
 {
   "name": "Parciva",
-  "description": "Design tokens v4 'Acolhedor com Peso' — ver DESIGN.md. Base neutra papel/fundo/tinta/grafite, pastel de estado nomeado por processo, acento unico (#35D48A) so em pulso/CTA-IA. Compativel com tailwind.config.js (v3) via theme.extend.",
-  "version": "4.0.0",
+  "description": "Design tokens v6 'Confianca Viva' — ver DESIGN.md. Substitui integralmente v4/v5. Base neutra estrutural, acento de marca (indigo) agora com papel amplo de acao (botao/nav/link/foco), cor de dado exclusiva de grafico/gauge, pastel de estado por entidade (parcela/contrato/pagador), tendencia separada de estado, chip de categoria, indicador ao vivo, ranking.",
+  "version": "6.0.0",
   "theme": {
     "extend": {
       "colors": {
         "surface": {
-          "canvas": "#F7F6F3",
-          "panel": "#EFEEEA",
+          "canvas": "#F6F6FA",
+          "panel": "#EFEFF7",
           "card": "#FFFFFF",
           "raised": "#FFFFFF",
-          "inverse": "#12140F"
+          "inverse": "#12131A"
         },
         "content": {
-          "primary": "#12140F",
-          "secondary": "#5C625F",
-          "muted": "#9AA09C",
+          "primary": "#12131A",
+          "secondary": "#5C5F6E",
+          "muted": "#9A9DAE",
           "on-inverse": "#FFFFFF"
         },
         "line": {
-          "hairline": "#E4E5E1",
-          "strong": "#D2D4CE"
+          "hairline": "#E6E7F0",
+          "strong": "#D3D5E3"
         },
-        "state": {
-          "open": "#5C625F",
-          "open-pastel": "#F7F6F3",
+        "accent": {
+          "DEFAULT": "#4F46E5",
+          "hover": "#4338CA",
+          "soft": "#EEF0FD"
+        },
+        "data": {
+          "1": "#2EC6E0",
+          "2": "#7C6FF0",
+          "1-soft": "#E4F6FA",
+          "2-soft": "#ECEAFB",
+          "3": "#F5A623"
+        },
+        "trend": {
+          "up": "#16A34A",
+          "down": "#DC2626"
+        },
+        "state-installment": {
+          "open": "#5C5F6E",
+          "open-pastel": "#F6F6FA",
           "review": "#9A6A18",
           "review-pastel": "#FBF0D9",
           "settled": "#0F6B45",
@@ -32,10 +48,42 @@
           "overdue": "#A0331F",
           "overdue-pastel": "#FBE6E1"
         },
-        "accent": {
-          "DEFAULT": "#35D48A",
-          "hover": "#1F9C4F"
+        "state-contract": {
+          "active": "#0F6B45",
+          "active-pastel": "#E1F3E8",
+          "closed": "#5C5F6E",
+          "closed-pastel": "#F6F6FA",
+          "suspended": "#9A6A18",
+          "suspended-pastel": "#FBF0D9",
+          "delinquent": "#A0331F",
+          "delinquent-pastel": "#FBE6E1"
+        },
+        "chip": {
+          "1": "#E4F6FA",
+          "2": "#ECEAFB",
+          "3": "#FBF0D9",
+          "4": "#EEF0FD"
+        },
+        "live": {
+          "dot": "#16A34A"
+        },
+        "ranking": {
+          "1": "#D4A017",
+          "2": "#9CA3AF",
+          "3": "#B45309"
         }
+      },
+      "screens": {
+        "sm": "640px",
+        "md": "768px",
+        "lg": "1024px",
+        "xl": "1280px"
+      },
+      "gridTemplateColumns": {
+        "bento": "repeat(12, minmax(0, 1fr))"
+      },
+      "gap": {
+        "bento": "16px"
       },
       "fontFamily": {
         "display": ["var(--font-ui)", "ui-sans-serif", "system-ui", "sans-serif"],
@@ -53,10 +101,7 @@
         "aux": ["0.75rem", { "lineHeight": "1.5", "letterSpacing": "0" }],
         "micro": ["0.6875rem", { "lineHeight": "1.3", "letterSpacing": "0.09em" }]
       },
-      "fontWeight": {
-        "normal": "400",
-        "medium": "500"
-      },
+      "fontWeight": { "normal": "400", "medium": "500" },
       "letterSpacing": {
         "micro": "0.09em",
         "display": "-0.02em",
@@ -70,9 +115,7 @@
         "mini": "12px",
         "pill": "9999px"
       },
-      "borderWidth": {
-        "hairline": "1px"
-      },
+      "borderWidth": { "hairline": "1px" },
       "spacing": {
         "nav": "52px",
         "nav-gap": "6px",
@@ -80,22 +123,28 @@
         "icon-sm": "14px",
         "card-pad": "20px",
         "card-gap": "12px",
-        "sidebar": "228px"
+        "sidebar": "228px",
+        "rail": "296px"
       },
       "boxShadow": {
         "none": "none",
         "card": "0 1px 2px rgba(18, 20, 15, 0.04)"
       },
-      "opacity": {
-        "hatch": "0.35"
-      }
+      "opacity": { "hatch": "0.35" }
     }
   },
   "usage": {
-    "accent": "acento (#35D48A) so em dois papeis: confirmacao em movimento (pulso) e botao de acao com IA/automacao. Nunca fundo de area grande, nunca botao primario (isso e sempre tinta).",
-    "semantic": "Pastel de estado e nomeado pelo ESTADO DO PROCESSO (aberto/analise/liquidado/atraso), nunca bom/ruim generico — nao existe verde-positivo/vermelho-negativo arbitrario. Ver DESIGN.md.",
-    "elevation": "Hierarquia vem da escada canvas -> panel -> card, reforcada por uma sombra muito sutil (shadow-card) — nao e elevacao dramatica.",
-    "typeScale": "Salto binario: micro (11px caps, tracking 0.09em) ou display (40px+). Evitar tamanhos intermediarios em titulos.",
+    "data_3_v6": "data.3 (#F5A623, DESIGN.md §7.7) e exclusivo do 3o segmento de funil/comparacao de 3 estagios — nunca uma 4a cor de paleta livre. Periodo anterior em barra de comparacao usa o MESMO tom de data.1/2 com opacity.hatch (0.35), nunca uma cor nova.",
+    "grid_bento_v6": "gridTemplateColumns.bento (12 colunas, DESIGN.md §4.7) e a camada de RESUMO — assimetrica de proposito (hero maior + apoio menor), nunca todos os cards do mesmo tamanho. Sempre seguida por uma camada de DETALHE (tabela/lista largura total) abaixo. Aplicavel a qualquer tela com dado agregavel; NAO aplicar em formulario/configuracao (camada unica continua certa ali).",
+    "accent_v6": "acento (#4F46E5, DESIGN.md §2.2) agora tem papel AMPLO: botao primario, link, nav ativo, foco, progress bar, CTA de upsell. Revoga a regra v4/v5 de 'botao primario sempre tinta'. Nunca em fundo estrutural (canvas/sidebar/header) nem em serie de grafico (isso e data.1/2).",
+    "data_v6": "data.1/data.2 continuam exclusivos de grafico/gauge/spotlight — nunca chrome de UI. Papel inalterado desde v5.",
+    "trend_v6": "trend.up/trend.down (DESIGN.md §2.4) sao NOVOS e distintos de state — uso unico: selo de variacao percentual vs. periodo anterior, sempre com periodo nomeado ao lado. Nunca reclassifica a entidade (isso e state-installment/state-contract).",
+    "state_v6": "state-installment cobre parcela (aberto/analise/liquidado/vencido). state-contract e NOVO (ativo/encerrado/suspenso/inadimplente) — mesmo vocabulario de cor reaproveitado tambem para pagador, so o rotulo textual muda por entidade.",
+    "chip_v6": "chip.1-4 (DESIGN.md §2.6/§7.4) sao fundo de icone de categoria, restritos a linha de lista densa, nunca em card de KPI (ali o padrao e sparkline + selo de tendencia).",
+    "live_v6": "live.dot (DESIGN.md §2.7) so quando ha polling/websocket real por tras — nunca decorativo.",
+    "ranking_v6": "ranking.1-3 (DESIGN.md §2.8) exclusivos de posicao 1-3 em lista ordenada por valor. Posicao 4+ usa numeral neutro sem cor.",
+    "elevation": "Hierarquia vem da escada canvas -> panel -> card, reforcada por sombra muito sutil (shadow-card).",
+    "typeScale": "Salto binario: micro (11px caps) ou display (40px+). Evitar tamanhos intermediarios em titulos.",
     "typography": "font-num (Inter, tabular) para dinheiro/metrica; font-sans (Schibsted Grotesk) para interface/prosa; font-mono (Geist Mono) para E2E/data/timestamp/rotulo/status."
   }
 }

@@ -5,10 +5,12 @@ import { motion } from "motion/react";
 import { buttonClassName, type ButtonVariant } from "./button-class-name";
 
 /**
- * DESIGN.md §2.3/§8: o acento vivo é reservado a confirmação em
- * movimento e ao botão de ação com IA/automação — nunca cor de botão
- * primário genérico. Botão "primary" aqui usa `surface.inverse`/
- * `content.on-inverse` (tinta sólida, texto branco), nunca acento.
+ * DESIGN.md v6 §2.2: o acento (`#4F46E5`, indigo) agora tem papel amplo
+ * de AÇÃO — botão primário, link, nav ativo, foco — sem exceção, é a
+ * mesma cor em todo lugar. Isso revoga de propósito a regra v4/v5
+ * ("botão primário sempre tinta/neutro", listada como derrubada em
+ * §0.2) — não é suavização, é reversão completa. Botão "primary" aqui
+ * usa `bg-accent`/`content.on-inverse`, nunca mais `surface.inverse`.
  *
  * `buttonClassName` mora em `./button-class-name` (sem "use client") —
  * páginas server component importam de lá diretamente. Ver comentário

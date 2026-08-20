@@ -10,6 +10,7 @@ import { Field } from "@/ui/components/Field";
 import { Input } from "@/ui/components/Input";
 import { Button } from "@/ui/components/Button";
 import { ErrorNote } from "@/ui/components/ErrorNote";
+import { AuthBackground } from "@/ui/components/AuthBackground";
 
 interface TenantOption {
   readonly slug: string;
@@ -59,7 +60,8 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-card-gap p-card-pad">
+    <main className="relative mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-card-gap overflow-hidden p-card-pad">
+      <AuthBackground />
       <Eyebrow>Parciva</Eyebrow>
       {tenantOptions ? (
         <Card>

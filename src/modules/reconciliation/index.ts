@@ -49,6 +49,7 @@ export {
   createProposal,
   markProposalDecision,
   listProposalsByDecision,
+  countProposalsByDecision,
   getProposalById,
 } from "./infra/proposal-repository";
 export type { NewProposal } from "./infra/proposal-repository";

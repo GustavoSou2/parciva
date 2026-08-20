@@ -2,9 +2,11 @@ import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
-import { deleteSession, logout } from "@/modules/identity";
+import { deleteSession, getUserById, listMembershipsForUser, logout } from "@/modules/identity";
+import { countProposalsByDecision } from "@/modules/reconciliation";
 import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from "@/shared/session-cookie";
 import { SidebarNav } from "./SidebarNav";
+import { Topbar } from "./Topbar";
 
 async function logoutAction(): Promise<void> {
   "use server";
@@ -19,8 +21,8 @@ async function logoutAction(): Promise<void> {
 }
 
 /**
- * Sidebar (DESIGN.md §12 / style-guide.md §7) substitui o header
- * horizontal — não a navegação completa da spec §13.2 (7 telas: Painel,
+ * Sidebar (DESIGN.md v6 §4.5) substitui o header horizontal — não a
+ * navegação completa da spec §13.2 (7 telas: Painel,
  * Fila de revisão, Contratos, Pagadores, Comprovantes, Configurações,
  * Conta). Só Contratos/Pagadores/Revisão/Extrato/Conta existem até este
  * marco (Conta ainda só cobre plano/cobrança, não configurações; Extrato
@@ -40,12 +42,27 @@ export default async function TenantLayout({
   params: Promise<{ tenantSlug: string }>;
 }) {
   const { tenantSlug } = await params;
-  await requireTenantSession(tenantSlug);
+  const session = await requireTenantSession(tenantSlug);
+
+  const [reviewQueueCount, memberships, user] = await Promise.all([
+    countProposalsByDecision({ tenantId: session.tenantId }, "needs_review"),
+    listMembershipsForUser(session.userId),
+    getUserById(session.userId),
+  ]);
 
   return (
     <div className="flex min-h-screen bg-surface-canvas">
-      <SidebarNav tenantSlug={tenantSlug} logoutAction={logoutAction} />
-      <main className="flex flex-1 flex-col gap-card-gap p-card-pad">{children}</main>
+      <SidebarNav tenantSlug={tenantSlug} reviewQueueCount={reviewQueueCount} />
+      {/* `pt-14` libera espaço pra barra fixa do menu móvel (SidebarNav, <md) — some a partir de md, quando a sidebar volta a ocupar espaço no fluxo em vez de flutuar por cima. */}
+      <div className="flex flex-1 flex-col pt-14 md:pt-0">
+        <Topbar
+          memberships={memberships}
+          currentTenantSlug={tenantSlug}
+          userName={user?.name.split(" ")[0] ?? "Conta"}
+          logoutAction={logoutAction}
+        />
+        <main className="flex flex-1 flex-col gap-card-gap p-card-pad">{children}</main>
+      </div>
       {modal}
     </div>
   );

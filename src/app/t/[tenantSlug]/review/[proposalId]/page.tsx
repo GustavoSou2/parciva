@@ -106,7 +106,7 @@ export default async function ReviewDetailPage({
               href={`/t/${tenantSlug}/receipts/${receipt.id}/file`}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-content-primary hover:underline"
+              className="text-accent hover:underline"
             >
               Abrir comprovante (PDF)
             </a>
@@ -236,7 +236,7 @@ export default async function ReviewDetailPage({
             ) : contracts.length === 0 ? (
               <p className="text-body text-content-muted">
                 Este pagador não tem contrato ativo.{" "}
-                <Link href={`/t/${tenantSlug}/review/${proposalId}`} className="text-content-primary hover:underline">
+                <Link href={`/t/${tenantSlug}/review/${proposalId}`} className="text-accent hover:underline">
                   Escolher outro pagador
                 </Link>
                 .

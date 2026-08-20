@@ -12,6 +12,7 @@ function toPayer(row: typeof payers.$inferSelect): Payer {
     phoneE164: row.phoneE164,
     email: row.email,
     status: row.status,
+    createdAt: row.createdAt,
   };
 }
 

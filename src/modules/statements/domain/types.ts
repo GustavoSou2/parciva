@@ -24,6 +24,8 @@ export interface StatementLine {
   readonly extractedRef: string | null;
   readonly matchKind: StatementMatchKind | null;
   readonly matchedPaymentId: string | null;
+  /** Contraparte (DESIGN.md v6 §7.8) — só existe pra linha já casada (`matchedPaymentId` resolve a um pagador via `payments.payer_id`); linha sem match não tem contraparte conhecida, é exatamente por isso que está sem match. */
+  readonly payerName: string | null;
   readonly createdAt: Date;
 }
 

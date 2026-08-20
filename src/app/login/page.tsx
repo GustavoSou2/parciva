@@ -26,6 +26,7 @@ import { Field } from "@/ui/components/Field";
 import { Input } from "@/ui/components/Input";
 import { Button } from "@/ui/components/Button";
 import { ErrorNote } from "@/ui/components/ErrorNote";
+import { AuthBackground } from "@/ui/components/AuthBackground";
 
 interface TenantOption {
   readonly slug: string;
@@ -111,7 +112,8 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-card-gap p-card-pad">
+    <main className="relative mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-card-gap overflow-hidden p-card-pad">
+      <AuthBackground />
       <Eyebrow>Parciva</Eyebrow>
       {tenantOptions ? (
         <Card>
@@ -175,7 +177,7 @@ export default function LoginPage() {
               {loading ? "Entrando..." : "Entrar"}
             </Button>
             <p className="text-body text-content-secondary">
-              <Link href="/forgot-password" className="text-content-primary hover:underline">
+              <Link href="/forgot-password" className="text-accent hover:underline">
                 Esqueceu a senha?
               </Link>
             </p>

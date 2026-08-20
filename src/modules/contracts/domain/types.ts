@@ -25,6 +25,8 @@ export interface Contract {
   readonly toleranceCents: Money;
   readonly startDate: string;
   readonly status: string;
+  /** Já existia na coluna do schema, nunca tinha sido mapeado pro tipo de domínio — DESIGN.md v6 §7.8 ("data relevante", "criado em"). */
+  readonly createdAt: Date;
 }
 
 export interface Installment {

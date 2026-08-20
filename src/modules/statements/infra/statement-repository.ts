@@ -9,10 +9,11 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb, type TenantContext } from "@/db/client";
 import { statementImports, statementLines } from "@/db/schema/statements";
+import { payers, payments } from "@/db/schema/financial";
 import { money } from "@/shared/money";
 import type { NewStatementLine, StatementImportSummary, StatementLine } from "../domain/types";
 
-function toStatementLine(row: typeof statementLines.$inferSelect): StatementLine {
+function toStatementLine(row: typeof statementLines.$inferSelect, payerName: string | null = null): StatementLine {
   return {
     id: row.id,
     statementImportId: row.statementImportId,
@@ -22,6 +23,7 @@ function toStatementLine(row: typeof statementLines.$inferSelect): StatementLine
     extractedRef: row.extractedRef,
     matchKind: row.matchKind,
     matchedPaymentId: row.matchedPaymentId,
+    payerName,
     createdAt: row.createdAt,
   };
 }
@@ -106,17 +108,26 @@ export async function getStatementImportById(
   return rows[0] ? toStatementImportSummary(rows[0]) : null;
 }
 
+/**
+ * `LEFT JOIN payments/payers` (DESIGN.md v6 §7.8, "contraparte") — só
+ * resolve nome pra linha já casada (`matchedPaymentId` não nulo); linha
+ * sem match fica com `payerName: null` de propósito, não é uma consulta
+ * faltando, é a ausência de contraparte que a própria falta de match
+ * representa. Uma query só, não uma por linha.
+ */
 export async function getStatementLinesByImport(
   ctx: TenantContext,
   importId: string,
 ): Promise<StatementLine[]> {
   const rows = await getDb(ctx, (db) =>
     db
-      .select()
+      .select({ line: statementLines, payerName: payers.name })
       .from(statementLines)
+      .leftJoin(payments, eq(statementLines.matchedPaymentId, payments.id))
+      .leftJoin(payers, eq(payments.payerId, payers.id))
       .where(and(eq(statementLines.tenantId, ctx.tenantId), eq(statementLines.statementImportId, importId))),
   );
-  return rows.map(toStatementLine);
+  return rows.map((row) => toStatementLine(row.line, row.payerName));
 }
 
 export async function getStatementLineById(

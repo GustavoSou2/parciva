@@ -53,7 +53,7 @@ export async function StatementLineFormContent({ params, searchParams }: Stateme
       form: (
         <p className="text-body text-content-primary">
           Esta linha já foi conciliada — volte pra{" "}
-          <Link href={`/t/${tenantSlug}/statements/${importId}`} className="text-content-primary hover:underline">
+          <Link href={`/t/${tenantSlug}/statements/${importId}`} className="text-accent hover:underline">
             lista do extrato
           </Link>
           .
@@ -113,7 +113,7 @@ export async function StatementLineFormContent({ params, searchParams }: Stateme
       Este pagador não tem contrato ativo.{" "}
       <Link
         href={`/t/${tenantSlug}/statements/${importId}/lines/${lineId}`}
-        className="text-content-primary hover:underline"
+        className="text-accent hover:underline"
       >
         Escolher outro pagador
       </Link>

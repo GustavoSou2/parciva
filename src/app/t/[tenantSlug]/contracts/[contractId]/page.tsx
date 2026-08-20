@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Landmark, Wallet, Zap, type LucideIcon } from "lucide-react";
 import { requireTenantSession } from "@/app/_lib/require-tenant-session";
 import { getContractById, listInstallmentsByContract } from "@/modules/contracts";
-import { getPayerById } from "@/modules/payers";
+import { getPayerById, getPayerDelinquencyStats, computeDelinquencyBadge } from "@/modules/payers";
 import { listEntriesForContract } from "@/modules/ledger";
-import { listPaymentsByContract } from "@/modules/reconciliation";
+import { listPaymentsByContract, type PaymentMethod } from "@/modules/reconciliation";
 import { requirePermission } from "@/modules/identity";
 import { isErr } from "@/shared/result";
 import { Card } from "@/ui/components/Card";
@@ -15,9 +16,49 @@ import { Button } from "@/ui/components/Button";
 import { buttonClassName } from "@/ui/components/button-class-name";
 import { ErrorNote } from "@/ui/components/ErrorNote";
 import { Money } from "@/ui/components/Money";
-import { StatusChip } from "@/ui/components/StatusChip";
+import { StatusChip, ContractStatusChip } from "@/ui/components/StatusChip";
+import { money, sum } from "@/shared/money";
 import { cancelContractAction, registerPaymentAction, reversePaymentAction } from "../actions";
 import { CronogramaCards } from "./CronogramaCards";
+
+const METHOD_LABEL: Record<PaymentMethod, string> = {
+  pix: "PIX",
+  ted: "TED",
+  doc: "DOC",
+  boleto: "Boleto",
+  cash: "Dinheiro",
+  card: "Cartão",
+  other: "Outro",
+};
+
+/**
+ * Chip tintado por método de pagamento (DESIGN.md v6 §2.6/§7.4) —
+ * linha de lista densa, 7 valores reais de `payment_method` (enum do
+ * schema) agrupados nos 3 tons existentes (`chip-1..3`, máximo do
+ * sistema): nunca um 4º/5º tom inventado por método, o agrupamento é
+ * por "como o dinheiro se move", não decoração.
+ */
+const METHOD_CHIP: Record<PaymentMethod, { bg: string; icon: LucideIcon }> = {
+  pix: { bg: "bg-chip-1", icon: Zap },
+  ted: { bg: "bg-chip-2", icon: Landmark },
+  doc: { bg: "bg-chip-2", icon: Landmark },
+  boleto: { bg: "bg-chip-2", icon: Landmark },
+  cash: { bg: "bg-chip-3", icon: Wallet },
+  card: { bg: "bg-chip-3", icon: Wallet },
+  other: { bg: "bg-chip-3", icon: Wallet },
+};
+
+function PaymentMethodChip({ method }: { method: PaymentMethod }) {
+  const { bg, icon: Icon } = METHOD_CHIP[method];
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className={`chip-icone ${bg}`} aria-hidden="true">
+        <Icon className="size-3.5 text-content-primary" strokeWidth={1.75} />
+      </span>
+      <span className="text-content-secondary">{METHOD_LABEL[method]}</span>
+    </span>
+  );
+}
 
 /**
  * `payments.verification_level` (decisão [5]) só tem chip pra
@@ -57,16 +98,30 @@ export default async function ContractDetailPage({
   const contract = await getContractById(ctx, contractId);
   if (!contract) notFound();
 
-  const [payer, installments, entries, paymentsList] = await Promise.all([
+  const [payer, installments, entries, paymentsList, delinquencyStats] = await Promise.all([
     getPayerById(ctx, contract.payerId),
     listInstallmentsByContract(ctx, contractId),
     listEntriesForContract(ctx, contractId),
     listPaymentsByContract(ctx, contractId),
+    getPayerDelinquencyStats(ctx, contract.payerId),
   ]);
+  const delinquencyBadge = computeDelinquencyBadge(delinquencyStats);
 
   const registerPayment = registerPaymentAction.bind(null, tenantSlug, contractId, contract.payerId);
   const cancelContract = cancelContractAction.bind(null, tenantSlug, contractId);
   const isContractActive = contract.status !== "cancelled";
+
+  // Versão leve do §4.7.1 (DESIGN.md v6) — 3 números derivados do MESMO
+  // `installments` já buscado acima pro cronograma, nenhuma query nova.
+  const totalPaidCents = sum(installments.map((i) => i.paidCents));
+  const owedCents = sum(
+    installments
+      .filter((i) => i.status !== "cancelled" && i.status !== "written_off")
+      .map((i) => money(i.amountCents - i.paidCents)),
+  );
+  const remainingInstallments = installments.filter(
+    (i) => i.status === "pending" || i.status === "partial" || i.status === "overdue",
+  ).length;
 
   return (
     <>
@@ -92,7 +147,7 @@ export default async function ContractDetailPage({
       </div>
       <Card>
         <p className="text-title text-content-primary">
-          {payer?.name ?? "Pagador"} {!isContractActive && <StatusChip status="cancelled" />}
+          {payer?.name ?? "Pagador"} {!isContractActive && <ContractStatusChip status="cancelled" />}
         </p>
         <p className="mt-1 text-body text-content-secondary">{contract.description ?? "Sem descrição"}</p>
         <p className="mt-3 font-num text-metric text-content-primary tabular-nums">
@@ -100,8 +155,58 @@ export default async function ContractDetailPage({
         </p>
       </Card>
 
-      <Eyebrow>Cronograma de parcelas</Eyebrow>
-      <CronogramaCards installments={installments} justConfirmed={justConfirmed === "1"} />
+      <div className="flex flex-col gap-card-gap lg:flex-row">
+        <div className="flex-1">
+          {/* Resumo leve (DESIGN.md v6 §4.7.1) — detalhe de UMA entidade, não lista: fileira de 3 números, não o grid bento completo. */}
+          <div className="flex flex-wrap gap-6 rounded-card border-hairline border-line-hairline bg-surface-card p-4 shadow-card sm:p-card-pad">
+            <div>
+              <span className="font-mono text-micro tracking-micro text-content-secondary uppercase">
+                Saldo devedor
+              </span>
+              <p className="mt-1 font-num text-metric-sm text-content-primary tabular-nums">
+                <Money value={owedCents} />
+              </p>
+            </div>
+            <div>
+              <span className="font-mono text-micro tracking-micro text-content-secondary uppercase">
+                Total pago
+              </span>
+              <p className="mt-1 font-num text-metric-sm text-content-primary tabular-nums">
+                <Money value={totalPaidCents} />
+              </p>
+            </div>
+            <div>
+              <span className="font-mono text-micro tracking-micro text-content-secondary uppercase">
+                Parcelas restantes
+              </span>
+              <p className="mt-1 font-num text-metric-sm text-content-primary tabular-nums">
+                {remainingInstallments}/{installments.length}
+              </p>
+            </div>
+          </div>
+
+          <Eyebrow>Cronograma de parcelas</Eyebrow>
+          <CronogramaCards installments={installments} justConfirmed={justConfirmed === "1"} />
+        </div>
+
+        {/*
+          Rail direita (DESIGN.md v6 §4.7.2) — selo de risco do pagador
+          deste contrato (§7.9, mesma consulta reaproveitada do detalhe
+          de pagador). "Linha do tempo de pontualidade" não construída
+          pelo mesmo motivo documentado em `payers/[payerId]/page.tsx` —
+          próximo passo, não bloqueio.
+        */}
+        {delinquencyBadge && (
+          <aside className="w-full lg:w-rail lg:shrink-0">
+            <Eyebrow>Selo de risco do pagador</Eyebrow>
+            <div className="cartao-rail">
+              <span className={delinquencyBadge.hasRisk ? "selo-tendencia-baixa" : "selo-tendencia-alta"}>
+                {delinquencyBadge.label}
+              </span>
+            </div>
+          </aside>
+        )}
+      </div>
 
       {canWrite && isContractActive && (
         <>
@@ -163,7 +268,9 @@ export default async function ContractDetailPage({
                     <td className="py-2 font-num tabular-nums">
                       <Money value={payment.amountCents} />
                     </td>
-                    <td className="py-2 text-content-secondary">{payment.method}</td>
+                    <td className="py-2">
+                      <PaymentMethodChip method={payment.method} />
+                    </td>
                     <td className="py-2">
                       <StatusChip
                         status={

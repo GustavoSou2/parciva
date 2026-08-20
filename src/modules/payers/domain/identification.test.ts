@@ -10,6 +10,7 @@ function payer(overrides: Partial<Payer> & { id: string }): Payer {
     phoneE164: null,
     email: null,
     status: "active",
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
     ...overrides,
   };
 }

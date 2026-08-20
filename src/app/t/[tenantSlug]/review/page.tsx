@@ -7,6 +7,7 @@ import { Eyebrow } from "@/ui/components/Eyebrow";
 import { Money } from "@/ui/components/Money";
 import { StatusChip, getCardStateBg } from "@/ui/components/StatusChip";
 import { buttonClassName } from "@/ui/components/button-class-name";
+import { money } from "@/shared/money";
 
 /**
  * Fila de revisão (Marco 5, spec §6.6/§14 Fase 2) — todo comprovante que
@@ -38,9 +39,37 @@ export default async function ReviewQueuePage({
     })),
   );
 
+  // Resumo mínimo (DESIGN.md v6 §4.7) — reduce sobre a MESMA lista já
+  // buscada; `amount_cents` pode ser null (comprovante sem valor
+  // extraído), soma só o que existe, nenhuma query nova.
+  const pendingTotalCents = rows.reduce(
+    (acc: number, { receipt }) => acc + (receipt?.extraction?.amount_cents ?? 0),
+    0,
+  );
+  const pendingTotal = money(pendingTotalCents);
+
   return (
     <>
       <Eyebrow>Fila de revisão</Eyebrow>
+
+      {rows.length > 0 && (
+        <div className="flex flex-wrap gap-6 rounded-card border-hairline border-line-hairline bg-surface-card p-4 shadow-card sm:p-card-pad">
+          <div>
+            <span className="font-mono text-micro tracking-micro text-content-secondary uppercase">
+              Em fila
+            </span>
+            <p className="mt-1 font-num text-metric-sm text-content-primary tabular-nums">{rows.length}</p>
+          </div>
+          <div>
+            <span className="font-mono text-micro tracking-micro text-content-secondary uppercase">
+              Valor pendente
+            </span>
+            <p className="mt-1 font-num text-metric-sm text-content-primary tabular-nums">
+              <Money value={pendingTotal} />
+            </p>
+          </div>
+        </div>
+      )}
 
       {rows.length === 0 ? (
         <p className="rounded-card border-hairline border-line-hairline bg-surface-card p-card-pad text-body text-content-muted shadow-card">

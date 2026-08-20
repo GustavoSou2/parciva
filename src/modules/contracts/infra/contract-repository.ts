@@ -22,6 +22,7 @@ function toContract(row: typeof contracts.$inferSelect): Contract {
     toleranceCents: money(row.toleranceCents),
     startDate: row.startDate,
     status: row.status,
+    createdAt: row.createdAt,
   };
 }
 
@@ -181,6 +182,39 @@ export async function listContracts(ctx: TenantContext): Promise<ContractSummary
       .orderBy(desc(contracts.createdAt)),
   );
   return rows.map((row) => ({ ...toContract(row.contract), payerName: row.payerName }));
+}
+
+export interface ContractRiskInfo {
+  readonly contractId: string;
+  /** `null` quando não há parcela pendente/parcial em aberto (contrato liquidado ou só com parcelas futuras já pagas — não deveria acontecer, mas nulo é a resposta honesta). */
+  readonly nextDueDate: string | null;
+  readonly hasOverdue: boolean;
+}
+
+/**
+ * Uma linha por contrato com pelo menos uma parcela não cancelada —
+ * DESIGN.md v6 §7.8 ("data relevante de próxima ação") e §4.7.2 (rail
+ * de Contratos, "taxa de contratos em dia vs. atraso"). Query única
+ * agregada, não uma consulta por contrato (`listContracts` já evita
+ * N+1 pro nome do pagador; isso segue o mesmo princípio pro cronograma).
+ */
+export async function listContractRiskInfo(ctx: TenantContext): Promise<ContractRiskInfo[]> {
+  const rows = await getDb(ctx, (db) =>
+    db
+      .select({
+        contractId: installments.contractId,
+        nextDueDate: sql<string | null>`min(${installments.dueDate}) filter (where ${installments.status} in ('pending', 'partial'))`,
+        hasOverdue: sql<boolean>`bool_or(${installments.status} = 'overdue')`,
+      })
+      .from(installments)
+      .where(and(eq(installments.tenantId, ctx.tenantId), ne(installments.status, "cancelled")))
+      .groupBy(installments.contractId),
+  );
+  return rows.map((row) => ({
+    contractId: row.contractId,
+    nextDueDate: row.nextDueDate,
+    hasOverdue: row.hasOverdue,
+  }));
 }
 
 export async function listContractsByPayer(ctx: TenantContext, payerId: string): Promise<Contract[]> {

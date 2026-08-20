@@ -20,3 +20,7 @@ export type {
   IdentificationResult,
   IdentificationTier,
 } from "./domain/identification";
+export { computeDelinquencyBadge } from "./domain/delinquency";
+export type { DelinquencyBadge, PayerDelinquencySummary } from "./domain/delinquency";
+export { listPayerDelinquencyStats, getPayerDelinquencyStats } from "./infra/payer-risk-repository";
+export type { PayerDelinquencyStats } from "./infra/payer-risk-repository";

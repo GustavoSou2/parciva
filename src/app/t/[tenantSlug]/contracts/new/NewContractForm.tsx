@@ -47,7 +47,7 @@ export async function NewContractFormContent({ params, searchParams }: NewContra
     return (
       <p className="text-body text-content-muted">
         Nenhum pagador cadastrado ainda —{" "}
-        <Link href={`/t/${tenantSlug}/payers/new`} className="text-content-primary hover:underline">
+        <Link href={`/t/${tenantSlug}/payers/new`} className="text-accent hover:underline">
           crie um pagador primeiro
         </Link>
         .
